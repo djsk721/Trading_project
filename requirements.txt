@@ -1,0 +1,38 @@
+# 웹 프레임워크
+streamlit
+
+# 데이터 처리
+pandas
+numpy
+
+# 시각화
+matplotlib
+seaborn
+plotly
+
+# 주식 데이터
+pykrx
+
+# 시간대 처리
+pytz
+
+# AI/ML 모델
+torch
+transformers
+
+# LangChain
+LangChain
+langchain-community
+
+# 검색 및 벡터화
+faiss-cpu
+
+# 한국어 처리
+kiwipiepy
+
+# 기타 유틸리티
+typing-extensions
+python-dateutil
+
+# 시스템 모니터링 (선택사항)
+psutil
