@@ -12,6 +12,7 @@ plotly
 
 # 주식 데이터
 pykrx
+yfinance
 
 # 시간대 처리
 pytz

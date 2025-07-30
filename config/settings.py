@@ -103,6 +103,53 @@ class AppConfig:
         "셀트리온 (068270)": "068270"
     }
     
+    # 인기 해외 주식 리스트
+    POPULAR_INTERNATIONAL_STOCKS = {
+        "Apple (AAPL)": "AAPL",
+        "Microsoft (MSFT)": "MSFT",
+        "Google (GOOGL)": "GOOGL",
+        "Amazon (AMZN)": "AMZN",
+        "Tesla (TSLA)": "TSLA",
+        "Meta (META)": "META",
+        "NVIDIA (NVDA)": "NVDA",
+        "Netflix (NFLX)": "NFLX",
+        "Intel (INTC)": "INTC",
+        "AMD (AMD)": "AMD",
+        "Coca-Cola (KO)": "KO",
+        "Johnson & Johnson (JNJ)": "JNJ",
+        "Visa (V)": "V",
+        "Mastercard (MA)": "MA",
+        "JPMorgan Chase (JPM)": "JPM",
+        "Berkshire Hathaway (BRK-B)": "BRK-B",
+        "UnitedHealth (UNH)": "UNH",
+        "Procter & Gamble (PG)": "PG",
+        "Home Depot (HD)": "HD",
+        "Bank of America (BAC)": "BAC"
+    }
+    
+    # 데이터 소스 설정
+    DATA_SOURCE_CONFIG = {
+        "KOREAN_SOURCE": "pykrx",      # 한국 주식: pykrx
+        "INTERNATIONAL_SOURCE": "yfinance",  # 해외 주식: yfinance
+        "KOREAN_PRICE_COLUMN": "종가",    # 한국 주식 가격 컬럼
+        "INTERNATIONAL_PRICE_COLUMN": "Close",  # 해외 주식 가격 컬럼
+        "SUPPORT_INTERNATIONAL": True,   # 해외 주식 지원 여부
+    }
+    
+    # 환율 설정
+    CURRENCY_CONFIG = {
+        "DEFAULT_EXCHANGE_RATE": 1300.0,  # 기본 USD/KRW 환율
+        "SUPPORTED_CURRENCIES": ["KRW", "USD"],  # 지원 통화
+        "CURRENCY_SYMBOLS": {
+            "KRW": "원",
+            "USD": "$"
+        },
+        "CURRENCY_NAMES": {
+            "KRW": "원화",
+            "USD": "달러"
+        }
+    }
+    
     # 특별 이벤트 감지 임계값
     EVENT_THRESHOLDS = {
         "PRICE_CHANGE": 5.0,     # 5% 이상 변동

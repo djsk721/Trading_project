@@ -77,12 +77,22 @@ class ChartManager:
             row=2, col=2
         )
         
+        # 통화 정보 가져오기
+        currency = getattr(stock_data, 'attrs', {}).get('currency', 'KRW')
+        currency_symbol = '원' if currency == 'KRW' else '$'
+        
         # 레이아웃 업데이트
         fig.update_layout(
             title=f'{stock_name} 기술적 분석 대시보드',
             height=700,
             showlegend=True
         )
+        
+        # Y축 제목 설정
+        fig.update_yaxes(title_text=f"가격 ({currency_symbol})", row=1, col=1)
+        fig.update_yaxes(title_text="RSI", row=1, col=2)
+        fig.update_yaxes(title_text="MACD", row=2, col=1)
+        fig.update_yaxes(title_text="거래량", row=2, col=2)
         
         return fig
     
@@ -125,10 +135,14 @@ class ChartManager:
             name='볼린저 중앙', line=dict(color='orange', dash='dot')
         ))
         
+        # 통화 정보 가져오기
+        currency = getattr(stock_data, 'attrs', {}).get('currency', 'KRW')
+        currency_symbol = '원' if currency == 'KRW' else '$'
+        
         fig.update_layout(
             title=f'{stock_name} 캔들스틱 차트 (볼린저 밴드)',
             xaxis_title='날짜',
-            yaxis_title='가격 (원)',
+            yaxis_title=f'가격 ({currency_symbol})',
             height=600
         )
         

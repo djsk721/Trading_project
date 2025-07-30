@@ -1,10 +1,5 @@
 """
 RAG 기반 주식 분석 시스템 - 메인 애플리케이션
-
-리팩토링된 모듈형 구조로 개선된 주식 분석 시스템
-- 설정 기반 관리
-- 모듈별 책임 분리
-- 확장 가능한 구조
 """
 
 import streamlit as st
@@ -42,13 +37,13 @@ def initialize_app():
 def render_sidebar():
     """사이드바 렌더링"""
     with st.sidebar:
-        st.title("📈 RAG 주식 분석")
+        st.title("RAG 주식 분석")
         
         # 채팅 관리 섹션
         st.subheader("채팅 관리")
         
         # 새 채팅 버튼
-        if st.button("🆕 새 분석 시작", use_container_width=True):
+        if st.button("새 분석 시작", use_container_width=True):
             new_chat = ChatManager.add_new_chat()
             st.session_state.current_chat = new_chat
             st.rerun()
@@ -72,7 +67,7 @@ def render_sidebar():
                 st.rerun()
             
             # 채팅 삭제 버튼
-            if st.button("🗑️ 선택된 분석 삭제", use_container_width=True):
+            if st.button("선택된 분석 삭제", use_container_width=True):
                 if ChatManager.delete_chat(selected_chat):
                     st.success("분석이 삭제되었습니다.")
                     st.rerun()
@@ -82,35 +77,69 @@ def render_sidebar():
         # 주식 설정 섹션
         st.subheader("주식 설정")
         
+        # 시장 선택
+        market_type = st.radio(
+            "시장 선택",
+            ["한국 주식", "해외 주식"],
+            horizontal=True
+        )
+        
+        include_international = market_type == "해외 주식"
+        
+        # 통화 선택
+        currency_option = st.radio(
+            "표시 통화",
+            ["원본 통화", "원화(KRW)", "달러(USD)"],
+            horizontal=True,
+            help="가격을 어떤 통화로 표시할지 선택하세요"
+        )
+        
+        target_currency = None
+        if currency_option == "원화(KRW)":
+            target_currency = "KRW"
+        elif currency_option == "달러(USD)":
+            target_currency = "USD"
+        
         # 종목 선택 방식
         input_method = st.radio(
             "종목 선택 방식",
-            ["📋 인기 종목", "🔍 전체 종목", "⌨️ 직접 입력"],
+            ["인기 종목", "전체 종목", "직접 입력"],
             horizontal=True
         )
         
         ticker = None
         stock_name_display = None
         
-        if input_method == "📋 인기 종목":
-            popular_stocks = StockDataManager.get_popular_stocks()
+        if input_method == "인기 종목":
+            if include_international:
+                popular_stocks = AppConfig.POPULAR_INTERNATIONAL_STOCKS
+                default_stock = "Apple (AAPL)"
+            else:
+                popular_stocks = StockDataManager.get_popular_stocks()
+                default_stock = "LG디스플레이 (034220)"
+            
             selected_stock = st.selectbox(
                 "인기 종목 선택",
                 options=list(popular_stocks.keys()),
-                index=list(popular_stocks.keys()).index("LG디스플레이 (034220)") 
-                if "LG디스플레이 (034220)" in popular_stocks else 0
+                index=list(popular_stocks.keys()).index(default_stock) 
+                if default_stock in popular_stocks else 0
             )
             ticker = popular_stocks[selected_stock]
             stock_name_display = selected_stock
             
-        elif input_method == "🔍 전체 종목":
+        elif input_method == "전체 종목":
             with st.spinner("전체 종목 리스트를 로드하는 중..."):
-                all_stocks = StockDataManager.get_all_stocks()
+                all_stocks = StockDataManager.get_all_stocks(include_international)
             
-            search_term = st.text_input("종목명 검색", placeholder="예: 삼성, LG, 네이버 등")
+            if include_international:
+                search_placeholder = "예: Apple, Microsoft, Tesla 등"
+            else:
+                search_placeholder = "예: 삼성, LG, 네이버 등"
+            
+            search_term = st.text_input("종목명 검색", placeholder=search_placeholder)
             
             if search_term:
-                filtered_stocks = StockDataManager.search_stocks(search_term)
+                filtered_stocks = StockDataManager.search_stocks(search_term, include_international=include_international)
                 if filtered_stocks:
                     selected_stock = st.selectbox(
                         f"검색 결과 ({len(filtered_stocks)}개)",
@@ -130,10 +159,17 @@ def render_sidebar():
                 stock_name_display = selected_stock
         
         else:  # 직접 입력
+            if include_international:
+                default_ticker = "AAPL"
+                help_text = "해외 주식 심볼을 입력하세요 (예: AAPL, MSFT, GOOGL)"
+            else:
+                default_ticker = AppConfig.DATA_CONFIG["DEFAULT_TICKER"]
+                help_text = "6자리 종목 코드를 입력하세요"
+            
             ticker = st.text_input(
                 "종목 코드 입력", 
-                value=AppConfig.DATA_CONFIG["DEFAULT_TICKER"],
-                help="6자리 종목 코드를 입력하세요"
+                value=default_ticker,
+                help=help_text
             )
             if ticker and StockDataManager.validate_ticker(ticker):
                 stock_name_display = f"{StockDataManager.get_stock_name(ticker)} ({ticker})"
@@ -154,17 +190,25 @@ def render_sidebar():
         )
         
         # 데이터 로드 버튼
-        if st.button("📊 데이터 로드", use_container_width=True, type="primary"):
+        if st.button("데이터 로드", use_container_width=True, type="primary"):
             if ticker:
                 with st.spinner("데이터를 로드하는 중..."):
-                    stock_data = StockDataManager.get_stock_data(ticker, days)
+                    stock_data = StockDataManager.get_stock_data(ticker, days, target_currency)
                     stock_name = StockDataManager.get_stock_name(ticker)
-                    
                     if stock_data is not None:
                         st.session_state.stock_data = stock_data
                         st.session_state.stock_name = stock_name
                         st.session_state.ticker = ticker
-                        st.success(f"{stock_name} 데이터 로드 완료!")
+                        st.session_state.target_currency = target_currency
+                        
+                        # 통화 정보 표시
+                        currency_info = ""
+                        if target_currency:
+                            original_currency = getattr(stock_data, 'attrs', {}).get('original_currency', 'Unknown')
+                            if target_currency != original_currency:
+                                currency_info = f" (환율 변환: {original_currency} → {target_currency})"
+                        
+                        st.success(f"{stock_name} 데이터 로드 완료!{currency_info}")
                         st.rerun()
                     else:
                         st.error("데이터 로드에 실패했습니다.")
@@ -182,13 +226,13 @@ def render_main_content():
     # 헤더
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.title("📈 RAG 기반 주식 분석 시스템")
+        st.title("RAG 기반 주식 분석 시스템")
         st.markdown("**AI와 기술적 분석을 결합한 지능형 주식 분석 플랫폼**")
     
     with col2:
         if 'stock_data' in st.session_state:
             st.metric(
-                "🎯 분석 중인 종목",
+                "분석 중인 종목",
                 st.session_state.stock_name,
                 delta=f"({st.session_state.ticker})"
             )
@@ -206,7 +250,7 @@ def render_main_content():
     render_stock_summary(stock_data, stock_name)
     
     # 탭 생성
-    tab1, tab2, tab3 = st.tabs(["📊 차트 분석", "🤖 AI 분석", "📈 기술적 지표"])
+    tab1, tab2, tab3 = st.tabs(["차트 분석", "AI 분석", "기술적 지표"])
     
     with tab1:
         render_chart_tab(stock_data, stock_name)
@@ -227,7 +271,7 @@ def render_welcome_screen():
     
     with col1:
         st.markdown("""
-        ### 🤖 AI 분석
+        ### AI 분석
         - **RAG 기술** 활용
         - **한국어 특화** LLM
         - **실시간 분석**
@@ -235,7 +279,7 @@ def render_welcome_screen():
     
     with col2:
         st.markdown("""
-        ### 📊 기술적 지표
+        ### 기술적 지표
         - **20+ 고급 지표**
         - **실시간 차트**
         - **신호 분석**
@@ -243,17 +287,17 @@ def render_welcome_screen():
     
     with col3:
         st.markdown("""
-        ### 💼 투자 전략
+        ### 투자 전략
         - **20일 예측**
         - **리스크 관리**
         - **포트폴리오 제안**
         """)
     
     st.markdown("---")
-    st.info("👈 **시작하기**: 사이드바에서 종목을 선택하고 데이터를 로드해주세요.")
+    st.info("**시작하기**: 사이드바에서 종목을 선택하고 데이터를 로드해주세요.")
     
     # 인기 종목 빠른 로드
-    st.subheader("⚡ 빠른 시작 - 인기 종목")
+    st.subheader("빠른 시작 - 인기 종목")
     popular_stocks = list(StockDataManager.get_popular_stocks().items())[:6]
     
     cols = st.columns(3)
@@ -261,7 +305,7 @@ def render_welcome_screen():
         col = cols[i % 3]
         name = display_name.split(' (')[0]
         
-        if col.button(f"📈 {name}", key=f"quick_{ticker}", use_container_width=True):
+        if col.button(f"{name}", key=f"quick_{ticker}", use_container_width=True):
             with st.spinner(f"{name} 데이터 로드 중..."):
                 stock_data = StockDataManager.get_stock_data(ticker)
                 if stock_data is not None:
@@ -278,15 +322,19 @@ def render_stock_summary(stock_data, stock_name):
     current_date = stock_data.index[-1].strftime('%Y-%m-%d')
     
     st.markdown("---")
-    st.markdown(f"### 📊 {stock_name} 현황 ({current_date})")
+    st.markdown(f"### {stock_name} 현황 ({current_date})")
     
     # 메트릭 표시
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
+        # 통화 정보 가져오기
+        currency = getattr(stock_data, 'attrs', {}).get('currency', 'KRW')
+        currency_symbol = '원' if currency == 'KRW' else '$'
+        
         col1.metric(
-            "💰 현재가",
-            f"{current_price:,.0f}원",
+            "현재가",
+            f"{current_price:,.0f}{currency_symbol}",
             f"{price_change:+.2f}%",
             delta_color="inverse" if price_change < 0 else "normal"
         )
@@ -294,21 +342,21 @@ def render_stock_summary(stock_data, stock_name):
     with col2:
         latest = stock_data.iloc[-1]
         col2.metric(
-            "📈 거래량",
+            "거래량",
             f"{latest['거래량']:,.0f}주",
             f"{latest['Volume_Ratio']:.1f}배"
         )
     
     with col3:
         col3.metric(
-            "📊 RSI(14)",
+            "RSI(14)",
             f"{latest['RSI_14']:.1f}",
             latest['RSI_Signal']
         )
     
     with col4:
         col4.metric(
-            "🎯 추세",
+            "추세",
             latest['Trend_20'],
             f"단기: {latest['Trend_5']}"
         )
@@ -316,7 +364,7 @@ def render_stock_summary(stock_data, stock_name):
 
 def render_chart_tab(stock_data, stock_name):
     """차트 탭 렌더링"""
-    st.subheader("📊 기술적 분석 차트")
+    st.subheader("기술적 분석 차트")
     
     # 차트 옵션
     col1, col2 = st.columns(2)
@@ -356,7 +404,7 @@ def render_chart_tab(stock_data, stock_name):
 
 def render_ai_analysis_tab(stock_data, stock_name):
     """AI 분석 탭 렌더링"""
-    st.subheader("🤖 AI 기반 주식 분석")
+    st.subheader("AI 기반 주식 분석")
     
     # RAG 시스템 초기화
     if 'query_processor' not in st.session_state:
@@ -386,7 +434,7 @@ def render_ai_analysis_tab(stock_data, stock_name):
     # 샘플 질문
     sample_questions = AppConfig.get_sample_questions(analysis_type)
     
-    with st.expander("💡 예시 질문"):
+    with st.expander("예시 질문"):
         for i, question in enumerate(sample_questions[:4]):  # 처음 4개만
             if st.button(question, key=f"sample_{i}"):
                 st.session_state.current_question = question
@@ -399,7 +447,7 @@ def render_ai_analysis_tab(stock_data, stock_name):
     )
     
     # 분석 실행
-    if st.button("🚀 AI 분석 실행", type="primary") and user_question:
+    if st.button("AI 분석 실행", type="primary") and user_question:
         with st.spinner(f"{analysis_type} 분석 중..."):
             query_processor = st.session_state.query_processor
             current_date = stock_data.index[-1].strftime('%Y-%m-%d')
@@ -410,18 +458,18 @@ def render_ai_analysis_tab(stock_data, stock_name):
                 current_date, current_price, stock_data
             )
             
-            st.markdown("### 🎯 분석 결과")
+            st.markdown("### 분석 결과")
             st.markdown(result)
             
             if retrieved_docs:
-                with st.expander(f"📚 참고 문서 ({len(retrieved_docs)}개)"):
+                with st.expander(f"참고 문서 ({len(retrieved_docs)}개)"):
                     for i, doc in enumerate(retrieved_docs[:3]):
                         st.write(f"**{i+1}.** {doc.metadata.get('date', 'Unknown')} - {doc.metadata.get('type', 'Unknown')}")
 
 
 def render_technical_tab(stock_data, stock_name):
     """기술적 지표 탭 렌더링"""
-    st.subheader("📈 기술적 지표 상세")
+    st.subheader("기술적 지표 상세")
     
     # 최신 데이터
     latest = stock_data.iloc[-1]
@@ -429,10 +477,14 @@ def render_technical_tab(stock_data, stock_name):
     # 지표 카테고리별 표시
     col1, col2 = st.columns(2)
     
+    # 통화 정보 가져오기
+    currency = getattr(stock_data, 'attrs', {}).get('currency', 'KRW')
+    currency_symbol = '원' if currency == 'KRW' else '$'
+    
     with col1:
-        st.markdown("**📊 추세 지표**")
-        st.metric("SMA(5)", f"{latest['SMA_5']:,.0f}원")
-        st.metric("SMA(20)", f"{latest['SMA_20']:,.0f}원")
+        st.markdown("**추세 지표**")
+        st.metric("SMA(5)", f"{latest['SMA_5']:,.0f}{currency_symbol}")
+        st.metric("SMA(20)", f"{latest['SMA_20']:,.0f}{currency_symbol}")
         st.write(f"**단기 추세**: {latest['Trend_5']}")
         st.write(f"**장기 추세**: {latest['Trend_20']}")
     
@@ -447,7 +499,7 @@ def render_technical_tab(stock_data, stock_name):
     signal_info = TechnicalIndicators.calculate_signal_strength(stock_data)
     
     st.markdown("---")
-    st.markdown("### 🎯 종합 기술적 신호")
+    st.markdown("### 종합 기술적 신호")
     
     col1, col2, col3 = st.columns(3)
     with col1:

@@ -68,15 +68,19 @@ class DocumentGenerator:
         sma_5_status = "상승" if row['종가'] > row['SMA_5'] else "하락"
         sma_20_status = "상승" if row['종가'] > row['SMA_20'] else "하락"
         
+        # 통화 정보 가져오기
+        currency = getattr(self.stock_data, 'attrs', {}).get('currency', 'KRW')
+        currency_symbol = '원' if currency == 'KRW' else '$'
+        
         content = f"""
         {date} {self.stock_name} 가격 동향 분석:
-        - 종가: {row['종가']:,.0f}원
+        - 종가: {row['종가']:,.0f}{currency_symbol}
         - 일일 변동률: {row['Price_Change']:.2f}%
-        - 5일 이동평균 대비: {sma_5_status} (현재가: {row['종가']:,.0f}원, 5일평균: {row['SMA_5']:,.0f}원)
-        - 20일 이동평균 대비: {sma_20_status} (현재가: {row['종가']:,.0f}원, 20일평균: {row['SMA_20']:,.0f}원)
+        - 5일 이동평균 대비: {sma_5_status} (현재가: {row['종가']:,.0f}{currency_symbol}, 5일평균: {row['SMA_5']:,.0f}{currency_symbol})
+        - 20일 이동평균 대비: {sma_20_status} (현재가: {row['종가']:,.0f}{currency_symbol}, 20일평균: {row['SMA_20']:,.0f}{currency_symbol})
         - 가격 추세: {row['Trend_20']} (장기), {row['Trend_5']} (단기)
-        - 고가: {row['고가']:,.0f}원, 저가: {row['저가']:,.0f}원
-        - 거래대금: {(row['종가'] * row['거래량']):,.0f}원
+        - 고가: {row['고가']:,.0f}{currency_symbol}, 저가: {row['저가']:,.0f}{currency_symbol}
+        - 거래대금: {(row['종가'] * row['거래량']):,.0f}{currency_symbol}
         """.strip()
         
         return Document(
