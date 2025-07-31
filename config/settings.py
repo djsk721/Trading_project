@@ -54,7 +54,7 @@ class AppConfig:
     MODEL_CONFIG = {
         "EMBEDDING_MODEL": "jhgan/ko-sroberta-nli",
         "FALLBACK_EMBEDDING": "sentence-transformers/all-MiniLM-L6-v2",
-        "LLM_MODEL": "MLP-KTLim/llama-3-Korean-Bllossom-8B",
+        "LLM_MODEL": "skt/A.X-4.0-Light",
         "MAX_NEW_TOKENS": 2048,
         "REPETITION_PENALTY": 1.1,
     }

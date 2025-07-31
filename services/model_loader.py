@@ -79,7 +79,7 @@ class ModelLoader:
                 "text-generation",
                 model=model_name,
                 model_kwargs={"torch_dtype": torch.bfloat16},
-                device_map="auto",
+                device_map="cuda:0",
                 max_new_tokens=config['MAX_NEW_TOKENS'],
                 do_sample=True,
                 pad_token_id=tokenizer.eos_token_id,
