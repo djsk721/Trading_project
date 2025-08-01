@@ -255,5 +255,5 @@ streamlit run main.py
   [ ] 뉴스 크롤링(최신 1일 -> 없을 시 -> 최신 1주일 치)
   [ ] 프롬프트에 넣기 위한 뉴스 요약
   [ ] 뉴스 요약 정보를 LLM에 프롬프트 형태로 제공
-  [ ] https://aihub.or.kr/aihubdata/data/view.do?currMenu=115&topMenu=100&  aihubDataSe=realm&dataSetSn=97 (뉴스 요약 데이터)
+  [ ] https://aihub.or.kr/aihubdata/data/view.do?currMenu=115&topMenu=100&aihubDataSe=realm&dataSetSn=97 (뉴스 요약 데이터)
 [ ] 데이터 추가에 따른 프롬프트 재구성
