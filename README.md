@@ -245,13 +245,15 @@ streamlit run main.py
 ---
 
 ## TODO
-[ ] 지표를 상승한 buy sell
-[ ] 국내외 상위 TOP 50 개 추가
-[ ] x: sequence data + [technical_indicators] -> y(데이터셋구성) 
-[ ]처음엔 1~5개 종목으로 시작해서 성능 테스트
-[ ]그 후 30~100개 종목 확장, 종목 코드와 종목별 정규화 전략 적용
-[ ] ResNet
-[ ] 뉴스 크롤링(최신 1일 -> 없을 시 -> 최신 1주일 치?)
-[ ] 프롬프트에 넣기 위한 뉴스 요약
-[ ] https://aihub.or.kr/aihubdata/data/view.do?currMenu=115&topMenu=100&aihubDataSe=realm&dataSetSn=97 (뉴스 요약 데이터)
+[ ] 주가 예측
+  [o] 국내외 상위 TOP 50 개 추가
+  [ ] x: sequence data + [technical_indicators] -> y(데이터셋구성) 
+  [ ] 처음엔 1~5개 종목으로 시작해서 성능 테스트
+  [ ] 그 후 30~100개 종목 확장, 종목 코드와 종목별 정규화 전략 적용
+  [ ] ResNet
+[ ] 뉴스 요약
+  [ ] 뉴스 크롤링(최신 1일 -> 없을 시 -> 최신 1주일 치)
+  [ ] 프롬프트에 넣기 위한 뉴스 요약
+  [ ] 뉴스 요약 정보를 LLM에 프롬프트 형태로 제공
+  [ ] https://aihub.or.kr/aihubdata/data/view.do?currMenu=115&topMenu=100&  aihubDataSe=realm&dataSetSn=97 (뉴스 요약 데이터)
 [ ] 데이터 추가에 따른 프롬프트 재구성
