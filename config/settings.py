@@ -124,7 +124,8 @@ class AppConfig:
         "UnitedHealth (UNH)": "UNH",
         "Procter & Gamble (PG)": "PG",
         "Home Depot (HD)": "HD",
-        "Bank of America (BAC)": "BAC"
+        "Bank of America (BAC)": "BAC",
+        "Figma (FIG)": "FIG"
     }
     
     # 데이터 소스 설정
