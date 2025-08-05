@@ -11,6 +11,7 @@ import yfinance as yf
 
 from config.settings import AppConfig
 from models.technical_indicators import TechnicalIndicators
+import requests
 
 
 class CurrencyConverter:
@@ -154,7 +155,7 @@ class StockDataManager:
         """
         stock_dict = {}
         
-        try:
+        if not include_international:
             # 한국 주식 (pykrx)
             tickers = stock.get_market_ticker_list()
             max_stocks = AppConfig.DATA_CONFIG["MAX_STOCKS_DISPLAY"]
@@ -166,12 +167,21 @@ class StockDataManager:
                         stock_dict[f"{name} ({ticker})"] = ticker
                 except Exception:
                     continue
-                    
-        except Exception as e:
-            st.error(f"한국 종목 리스트 로드 오류: {e}")
-        
-        # 해외 주식 추가
-        if include_international and AppConfig.DATA_SOURCE_CONFIG["SUPPORT_INTERNATIONAL"]:
+        else:
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/json, text/plain, */*",
+            }
+
+            url = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=5000&download=true"
+
+            r = requests.get(url, headers=headers)
+
+            # NASDAQ API는 JSON 응답을 반환합니다.
+            data = r.json()
+            for stock_data in data['data']['rows']:
+                stock_dict[f"{stock_data['name']} ({stock_data['symbol']})"] = stock_data['symbol']
+
             stock_dict.update(AppConfig.POPULAR_INTERNATIONAL_STOCKS)
         
         return stock_dict if stock_dict else AppConfig.POPULAR_STOCKS.copy()
