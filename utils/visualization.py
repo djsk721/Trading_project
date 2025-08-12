@@ -13,9 +13,6 @@ import plotly.express as px
 from pathlib import Path
 import logging
 
-plt.rcParams['font.family'] = 'Malgun Gothic'
-plt.rcParams['axes.unicode_minus'] = False 
-
 
 class TimeSeriesVisualizer:
     """시계열 데이터 시각화 클래스"""
@@ -26,6 +23,8 @@ class TimeSeriesVisualizer:
         
         # 스타일 설정
         plt.style.use('seaborn-v0_8')
+        plt.rcParams['font.family'] = 'Malgun Gothic'
+        plt.rcParams['axes.unicode_minus'] = False 
         sns.set_palette("husl")
     
     def plot_time_series(self, data: pd.DataFrame, columns: List[str], 

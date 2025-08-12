@@ -48,7 +48,7 @@ class TechnicalIndicators:
         # 변동성 지표
         df_result = TechnicalIndicators._calculate_volatility_indicators(df_result, config)
         
-        return df_result.fillna(method='ffill').fillna(0)
+        return df_result.ffill().fillna(0)
     
     @staticmethod
     def _calculate_moving_averages(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
