@@ -181,14 +181,18 @@ def render_stock_info_header(df: pd.DataFrame, quote_info: Dict[str, Any], symbo
 
 
 def render_chart_tab(df: pd.DataFrame, symbol: str, market: str, settings: Dict[str, Any]):
-    st.subheader("📈 통합 차트 분석")
+    st.subheader("📈 차트 분석")
     if df.empty:
         st.warning("차트 데이터가 없습니다.")
         return
+
     title_suffix = f"{settings['timeframe']}"
     plot_title = f"{symbol} ({market}) - {title_suffix} [KIS API]" if settings["use_kis_data"] else f"{symbol} ({market}) - {title_suffix}"
+
+    # 캔들 + 보조지표 (RSI, MACD 등은 차트 아래 자동 배치됨)
     render_lightweight_chart(df, plot_title, settings["indicators"], settings["timeframe"])
 
+    # 지표 요약 박스
     st.subheader("📊 기술적 분석 요약")
     ind = calculate_enhanced_indicators(df)
     latest = ind.iloc[-1]
@@ -213,6 +217,7 @@ def render_chart_tab(df: pd.DataFrame, symbol: str, market: str, settings: Dict[
     with st.expander("📋 상세 데이터 미리보기"):
         display_cols = ["open", "high", "low", "close", "volume", "sma_20", "sma_120", "rsi", "macd", "stoch_k"]
         st.dataframe(ind[display_cols].round(3), width='content')
+
 
 
 def _render_order_tab(kis_instance, symbol: str, quote_info: Dict[str, Any]):
