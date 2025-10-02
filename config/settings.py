@@ -48,6 +48,7 @@ class AppConfig:
         "STOCH_SMOOTH": 3,
         "VOLUME_PERIOD": 20,
         "VOLATILITY_PERIOD": 20,
+        "DMI_TRENDLINE_PERIOD": 14,  # DMI Trendline 기간 설정
     }
     
     # 모델 설정
@@ -161,6 +162,9 @@ class AppConfig:
         "STOCH_OVERSOLD": 20,
         "HIGH_VOLATILITY": 3.0,
         "MEDIUM_VOLATILITY": 1.5,
+        "TRENDLINE_OVERBOUGHT": 70,  # Trendline 과매수
+        "TRENDLINE_OVERSOLD": 30,    # Trendline 과매도
+        "TRENDLINE_NEUTRAL": 50,     # Trendline 중립선
     }
     
     # 예측 설정
