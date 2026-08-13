@@ -6,8 +6,7 @@ import torch
 from typing import Optional
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.llms import HuggingFacePipeline
-from transformers import AutoTokenizer, pipeline
-
+from transformers import AutoTokenizer, pipeline, AutoModelForCausalLM, Mxfp4Config
 from config.settings import AppConfig
 
 
