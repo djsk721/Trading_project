@@ -1,0 +1,14 @@
+.env
+secret.json
+virtual_secret.json
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/node_modules/
+frontend/dist/
+backend/.venv/
+*.log
+.DS_Store
+.cache/
+
+.env
