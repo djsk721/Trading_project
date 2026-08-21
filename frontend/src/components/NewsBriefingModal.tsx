@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { NewsSummary } from "../api";
 import { formatNewsTime } from "../formatTime";
+import NewsToneChip from "./NewsToneChip";
 
 type BriefingSource = {
   title: string;
@@ -10,6 +11,7 @@ type BriefingSource = {
   published_at?: string | null;
   importance?: number | null;
   category_label?: string;
+  sentiment?: string | null;
 };
 
 type Props = {
@@ -139,6 +141,7 @@ export default function NewsBriefingModal({
                 .filter(Boolean)
                 .join(" · ")}
             </span>
+            <NewsToneChip tone={summary?.sentiment || active?.sentiment} />
           </div>
           <button type="button" className="btn ghost" onClick={onClose}>
             닫기

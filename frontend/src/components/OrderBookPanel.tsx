@@ -74,10 +74,10 @@ export default function OrderBookPanel({
         setError(
           r.ok || (r.asks?.length || 0) + (r.bids?.length || 0) > 0
             ? r.rate_limited
-              ? "KIS 호출 한도 — 캐시 표시"
+              ? "거래 한도 — 저장값 표시"
               : ""
             : r.rate_limited
-              ? "KIS 호출 한도 — 잠시 후 재시도"
+              ? "거래 한도 — 잠시 후 다시 시도"
               : r.message || "호가 없음"
         );
       } catch (e: unknown) {

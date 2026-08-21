@@ -99,8 +99,24 @@ def _is_domestic_market(market: str) -> bool:
     return m.startswith("K") and m not in {"NYSE", "NASDAQ", "AMEX"}
 
 
-def _empty_account() -> Dict[str, Any]:
-    return {
+def _kis_setup_hint() -> str:
+    settings = get_settings()
+    if not HAS_PYKIS:
+        return (
+            "python-kis(pykis) 패키지가 설치되지 않았습니다. "
+            "backend에서 `pip install -r requirements.txt` 실행 후 서버를 재시작하세요."
+        )
+    if not (
+        settings.kis_app_key
+        and settings.kis_app_secret
+        and settings.kis_account
+    ) and not settings.resolved_kis_auth_path.exists():
+        return "KIS API 키가 없습니다. `.env` 또는 내 계좌에서 키를 설정하세요."
+    return "KIS API 연결에 실패했습니다. 앱키·계좌·실전/모의 설정을 확인하세요."
+
+
+def _empty_account(error: str = "") -> Dict[str, Any]:
+    out = {
         "connected": False,
         "account": "",
         "virtual": False,
@@ -114,10 +130,20 @@ def _empty_account() -> Dict[str, Any]:
         "overseas": {"deposit_usd": 0.0, "deposit_krw": 0.0, "stocks_value": 0.0, "holdings": []},
         "holdings": [],
     }
+    if error:
+        out["error"] = error
+    return out
+
+
+def reset_kis_instance() -> None:
+    """사용자 키 변경 시 기존 연결을 버리고 다시 붙입니다."""
+    global _kis_instance
+    with _kis_lock:
+        _kis_instance = None
 
 
 def get_kis(force: bool = False) -> Optional[Any]:
-    """KIS 인스턴스 생성. secret.json 우선, 없으면 .env 값 사용."""
+    """KIS 인스턴스 생성. 사용자 키 > secret.json > .env."""
     global _kis_instance
     if _kis_instance is not None and not force:
         return _kis_instance
@@ -133,6 +159,22 @@ def get_kis(force: bool = False) -> Optional[Any]:
         auth_path = settings.resolved_kis_auth_path
 
         try:
+            from app.services.broker_settings import get_kis_override
+
+            override = get_kis_override()
+            if override:
+                hts_id = (override.get("hts_id") or "user").lstrip("@").strip()
+                virtual = bool(override.get("virtual", True))
+                _kis_instance = _build_pykis(
+                    hts_id=hts_id,
+                    app_key=str(override.get("app_key") or ""),
+                    app_secret=str(override.get("app_secret") or ""),
+                    account=str(override.get("account") or ""),
+                    virtual=virtual,
+                )
+                log.info("KIS connected via user keys (virtual=%s)", virtual)
+                return _kis_instance
+
             if auth_path.exists():
                 # 웹소켓은 시세 폴링에 불필요하고 리소스를 잡아먹음
                 _kis_instance = PyKis(
@@ -145,38 +187,13 @@ def get_kis(force: bool = False) -> Optional[Any]:
 
             if settings.kis_app_key and settings.kis_app_secret and settings.kis_account:
                 hts_id = (settings.kis_hts_id or "user").lstrip("@").strip()
-                # pykis는 첫 번째 auth가 실전(virtual=False)이어야 하며,
-                # 모의투자는 virtual_auth로 별도 전달해야 한다.
-                if settings.kis_virtual:
-                    real_auth = KisAuth(
-                        id=hts_id,
-                        appkey=settings.kis_app_key,
-                        secretkey=settings.kis_app_secret,
-                        account=settings.kis_account,
-                        virtual=False,
-                    )
-                    virtual_auth = KisAuth(
-                        id=hts_id,
-                        appkey=settings.kis_app_key,
-                        secretkey=settings.kis_app_secret,
-                        account=settings.kis_account,
-                        virtual=True,
-                    )
-                    _kis_instance = PyKis(
-                        real_auth,
-                        virtual_auth,
-                        keep_token=True,
-                        use_websocket=False,
-                    )
-                else:
-                    auth = KisAuth(
-                        id=hts_id,
-                        appkey=settings.kis_app_key,
-                        secretkey=settings.kis_app_secret,
-                        account=settings.kis_account,
-                        virtual=False,
-                    )
-                    _kis_instance = PyKis(auth, keep_token=True, use_websocket=False)
+                _kis_instance = _build_pykis(
+                    hts_id=hts_id,
+                    app_key=settings.kis_app_key,
+                    app_secret=settings.kis_app_secret,
+                    account=settings.kis_account,
+                    virtual=bool(settings.kis_virtual),
+                )
                 log.info("KIS connected via .env credentials (virtual=%s)", settings.kis_virtual)
                 return _kis_instance
             log.warning("KIS credentials not found (.env / secret.json)")
@@ -186,6 +203,47 @@ def get_kis(force: bool = False) -> Optional[Any]:
             return None
 
     return None
+
+
+def _build_pykis(
+    *,
+    hts_id: str,
+    app_key: str,
+    app_secret: str,
+    account: str,
+    virtual: bool,
+) -> Any:
+    # pykis는 첫 번째 auth가 실전(virtual=False)이어야 하며,
+    # 모의투자는 virtual_auth로 별도 전달해야 한다.
+    if virtual:
+        real_auth = KisAuth(
+            id=hts_id,
+            appkey=app_key,
+            secretkey=app_secret,
+            account=account,
+            virtual=False,
+        )
+        virtual_auth = KisAuth(
+            id=hts_id,
+            appkey=app_key,
+            secretkey=app_secret,
+            account=account,
+            virtual=True,
+        )
+        return PyKis(
+            real_auth,
+            virtual_auth,
+            keep_token=True,
+            use_websocket=False,
+        )
+    auth = KisAuth(
+        id=hts_id,
+        appkey=app_key,
+        secretkey=app_secret,
+        account=account,
+        virtual=False,
+    )
+    return PyKis(auth, keep_token=True, use_websocket=False)
 
 
 def is_kis_connected() -> bool:
@@ -481,7 +539,7 @@ def _fetch_account_overview() -> Dict[str, Any]:
         return empty
     kis = get_kis()
     if not kis:
-        return empty
+        return _empty_account(_kis_setup_hint())
 
     settings = get_settings()
     try:

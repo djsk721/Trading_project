@@ -18,6 +18,12 @@ class RecommendItem(BaseModel):
     stance: str = "watch"
     buy_price: float = 0
     sell_price: float = 0
+    sector: str = ""
+    status_label: str = ""
+    highlights: List[str] = Field(default_factory=list)
+    metric_note: str = ""
+    detail_summary: str = ""
+    ai_summary: str = ""
 
 
 class ScanItem(BaseModel):
@@ -32,6 +38,12 @@ class ScanItem(BaseModel):
     macd_signal: str = "NEUTRAL"
     trend: str = "SIDEWAYS"
     reasons: List[str] = Field(default_factory=list)
+    sector: str = ""
+    status_label: str = ""
+    highlights: List[str] = Field(default_factory=list)
+    metric_note: str = ""
+    detail_summary: str = ""
+    ai_summary: str = ""
 
 
 class RecommendResponse(BaseModel):

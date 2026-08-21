@@ -12,3 +12,6 @@ backend/.venv/
 .cache/
 
 .env
+.sysifus
+.sisyphus
+data/

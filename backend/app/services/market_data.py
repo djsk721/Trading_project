@@ -1,4 +1,4 @@
-"""시세/차트 데이터 수집 (공용 소스 우선, KIS는 보조)."""
+"""시세/차트 데이터 수집 (공용 소스 우선, 증권사 API는 보조)."""
 from __future__ import annotations
 
 import logging
@@ -8,7 +8,7 @@ from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
-from app.services import kis_client
+from app.services import broker, kis_client
 from app.services.indicators import calculate_indicators, ensure_ohlcv, latest_summary, series_to_list
 
 log = logging.getLogger(__name__)
@@ -19,33 +19,43 @@ _OHLCV_TTL_INTRADAY = 25.0
 _OHLCV_TTL_DAILY = 120.0
 
 POPULAR_KR = {
-    "005930": "Samsung Electronics",
-    "000660": "SK hynix",
-    "034220": "LG Display",
-    "035420": "NAVER",
-    "035720": "Kakao",
-    "207940": "Samsung Biologics",
-    "051910": "LG Chem",
-    "006400": "Samsung SDI",
-    "005380": "Hyundai Motor",
-    "000270": "Kia",
-    "005490": "POSCO Holdings",
-    "105560": "KB Financial",
-    "055550": "Shinhan Financial",
-    "066570": "LG Electronics",
-    "068270": "Celltrion",
+    "005930": "삼성전자",
+    "000660": "SK하이닉스",
+    "034220": "LG디스플레이",
+    "035420": "네이버",
+    "035720": "카카오",
+    "207940": "삼성바이오로직스",
+    "051910": "LG화학",
+    "006400": "삼성SDI",
+    "005380": "현대차",
+    "000270": "기아",
+    "005490": "POSCO홀딩스",
+    "105560": "KB금융",
+    "055550": "신한지주",
+    "066570": "LG전자",
+    "068270": "셀트리온",
 }
 
 POPULAR_US = {
-    "AAPL": "Apple",
-    "MSFT": "Microsoft",
-    "GOOGL": "Alphabet",
-    "AMZN": "Amazon",
-    "TSLA": "Tesla",
-    "META": "Meta",
-    "NVDA": "NVIDIA",
+    "AAPL": "애플",
+    "MSFT": "마이크로소프트",
+    "GOOGL": "알파벳",
+    "AMZN": "아마존",
+    "TSLA": "테슬라",
+    "META": "메타",
+    "NVDA": "엔비디아",
     "AMD": "AMD",
 }
+
+
+def _from_broker(symbol: str, timeframe: str, minute_interval: int, hour_interval: int) -> pd.DataFrame:
+    """활성 증권사 차트. 토스는 Open API 캔들, 한투는 pykis."""
+    if broker.is_rate_limited():
+        log.debug("broker chart skipped (rate-limit cooldown): %s", symbol)
+        return pd.DataFrame()
+    if broker.active_broker() == "toss":
+        return broker.fetch_ohlcv(symbol, timeframe, minute_interval, hour_interval)
+    return _from_kis(symbol, timeframe, minute_interval, hour_interval)
 
 
 def _from_kis(symbol: str, timeframe: str, minute_interval: int, hour_interval: int) -> pd.DataFrame:
@@ -303,7 +313,7 @@ def fetch_ohlcv(
 ) -> pd.DataFrame:
     """
     일/주봉: 공용 데이터 우선.
-    분/시간봉: yfinance 다일치 + KIS 당일 병합 (KIS는 당일만 제공).
+    분/시간봉: yfinance 다일치 + 증권사 당일 병합 (한투/토스).
 
     allow_kis=False 이면 공용 소스만 사용 (추천 대량 스캔용).
     prefer_yfinance=True 이면 일/주봉도 yfinance 우선 (추천 경로 통일).
@@ -327,13 +337,13 @@ def fetch_ohlcv(
             symbol, market, timeframe, minute_interval, hour_interval,
         )
         today = pd.DataFrame()
-        need_kis = (
+        need_broker = (
             allow_kis
             and hist.empty
-            and not kis_client.is_rate_limited()
+            and not broker.is_rate_limited()
         )
-        if need_kis:
-            today = _from_kis(symbol, timeframe, minute_interval, hour_interval)
+        if need_broker:
+            today = _from_broker(symbol, timeframe, minute_interval, hour_interval)
 
         if not hist.empty and not today.empty:
             hist_n = _to_market_naive(hist, market, symbol)
@@ -352,15 +362,15 @@ def fetch_ohlcv(
             daily = _fetch_public_daily(symbol, market, days=max(days * 2, 365))
         if not daily.empty:
             df = _resample_week(daily)
-        if df.empty and allow_kis and not kis_client.is_rate_limited():
-            df = _from_kis(symbol, "week", minute_interval, hour_interval)
+        if df.empty and allow_kis and not broker.is_rate_limited():
+            df = _from_broker(symbol, "week", minute_interval, hour_interval)
     else:
         if prefer_yfinance:
             df = _from_yfinance(symbol, days=days, market=market, yf_symbol=yf_symbol)
         else:
             df = _fetch_public_daily(symbol, market, days=days)
-        if df.empty and allow_kis and not kis_client.is_rate_limited():
-            df = _from_kis(symbol, timeframe, minute_interval, hour_interval)
+        if df.empty and allow_kis and not broker.is_rate_limited():
+            df = _from_broker(symbol, timeframe, minute_interval, hour_interval)
 
     if not df.empty:
         _OHLCV_CACHE[cache_key] = (time.time(), df.copy())
@@ -474,7 +484,7 @@ def resolve_stock_name(symbol: str, market: str = "KRX") -> str:
         return symbol.strip() if symbol else key
 
     # KIS 추가 호출 금지: 이미 캐시된 시세 이름만 사용
-    cached_quote = kis_client.peek_cached_quote(key)
+    cached_quote = broker.peek_cached_quote(key)
     if cached_quote.get("name"):
         return str(cached_quote["name"])
 

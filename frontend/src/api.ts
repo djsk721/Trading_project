@@ -15,6 +15,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export type Health = {
   status: string;
   kis_connected: boolean;
+  broker_connected?: boolean;
+  active_broker?: "kis" | "toss" | string;
+  broker_hint?: string;
   ollama_connected: boolean;
   nvidia_connected?: boolean;
   ai_connected?: boolean;
@@ -104,6 +107,8 @@ export type NewsItem = {
   published_at?: string | null;
   importance?: number | null;
   importance_reason?: string;
+  sentiment?: string;
+  sentiment_reason?: string;
   has_ai_summary?: boolean;
 };
 
@@ -120,6 +125,8 @@ export type MarketNewsItem = {
   has_ai_summary: boolean;
   importance?: number | null;
   importance_reason?: string;
+  sentiment?: string;
+  sentiment_reason?: string;
 };
 
 export type NewsSummary = {
@@ -132,6 +139,8 @@ export type NewsSummary = {
   summary_ko: string;
   importance?: number;
   importance_reason?: string;
+  sentiment?: string;
+  sentiment_reason?: string;
   provider: string;
   updated_at?: string;
   cached: boolean;
@@ -186,6 +195,12 @@ export type RecommendItem = {
   stance?: string;
   buy_price?: number;
   sell_price?: number;
+  sector?: string;
+  status_label?: string;
+  highlights?: string[];
+  metric_note?: string;
+  detail_summary?: string;
+  ai_summary?: string;
 };
 
 export type ScanItem = {
@@ -200,6 +215,12 @@ export type ScanItem = {
   macd_signal: string;
   trend: string;
   reasons?: string[];
+  sector?: string;
+  status_label?: string;
+  highlights?: string[];
+  metric_note?: string;
+  detail_summary?: string;
+  ai_summary?: string;
 };
 
 export type HoldingItem = {
@@ -246,6 +267,53 @@ export type AccountOverview = {
   };
   holdings: HoldingItem[];
   error?: string | null;
+};
+
+export type Sec13FManager = {
+  cik: string;
+  manager_name: string;
+  filing_date?: string;
+  report_period?: string;
+  portfolio_value: number;
+  holdings_count: number;
+};
+
+export type Sec13FHolding = {
+  cik: string;
+  manager_name: string;
+  report_period: string;
+  issuer: string;
+  ticker: string;
+  cusip: string;
+  security_class?: string;
+  value: number;
+  shares: number;
+  previous_shares?: number;
+  current_shares?: number;
+  previous_value?: number;
+  current_value?: number;
+  put_call?: string;
+  change_type?: "NEW" | "INCREASED" | "DECREASED" | "SOLD" | "UNCHANGED" | string;
+  share_change?: number;
+  value_change?: number;
+  portfolio_weight?: number;
+};
+
+export type Sec13FDashboard = {
+  metadata: Record<string, any>;
+  manager_count: number;
+  issuer_count: number;
+  top_managers: Sec13FManager[];
+  recent_new_holdings: Sec13FHolding[];
+  shared_buys: { ticker: string; issuer: string; manager_count: number; total_value: number }[];
+};
+
+export type Sec13FManagerAnalysis = {
+  manager_count: number;
+  holding_count: number;
+  total_value: number;
+  top_holdings: (Sec13FHolding & { manager_count?: number })[];
+  change_summary: Record<string, number>;
 };
 
 export const api = {
@@ -350,6 +418,12 @@ export const api = {
       updated_at?: string | null;
     }>(`/api/recommend/daily?${params.toString()}`);
   },
+  brokerStatus: () => request<Record<string, unknown>>("/api/settings/broker"),
+  saveBrokerKeys: (body: object) =>
+    request<Record<string, unknown>>("/api/settings/broker", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   ruleAnalysis: (symbol: string, market: string, stockName = "") => {
     const params = new URLSearchParams({
       symbol,
@@ -370,4 +444,33 @@ export const api = {
       stock_name: string;
       rule_analysis?: RuleAnalysis;
     }>("/api/analysis/ask", { method: "POST", body: JSON.stringify(body) }),
+  sec13fUpdate: (force = false) =>
+    request<Record<string, any>>(`/api/13f/update?force=${force}`, { method: "POST" }),
+  sec13fDashboard: () => request<Sec13FDashboard>("/api/13f/dashboard"),
+  sec13fManagers: (q = "", limit = 50) => {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    return request<{ items: Sec13FManager[] }>(`/api/13f/managers?${params.toString()}`);
+  },
+  sec13fManagersAnalysis: (q = "", limit = 30) => {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    return request<Sec13FManagerAnalysis>(`/api/13f/managers/analysis?${params.toString()}`);
+  },
+  sec13fManager: (cik: string, opts?: { holding_q?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.holding_q) params.set("holding_q", opts.holding_q);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return request<{ manager: Sec13FManager; holdings: Sec13FHolding[] }>(
+      `/api/13f/managers/${encodeURIComponent(cik)}${qs ? `?${qs}` : ""}`
+    );
+  },
+  sec13fStock: (ticker: string) =>
+    request<{
+      ticker: string;
+      issuer: string;
+      holder_count: number;
+      holders: Sec13FHolding[];
+      new_holders: Sec13FHolding[];
+      sold_holders: Sec13FHolding[];
+    }>(`/api/13f/stocks/${encodeURIComponent(ticker)}`),
 };

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query
 from urllib.parse import unquote
 
 from app.schemas.market import ChartResponse, OrderBookResponse, QuoteResponse
-from app.services import kis_client
+from app.services import broker
 from app.services.macro_snapshots import fetch_macro_snapshots
 from app.services.market_data import POPULAR_KR, POPULAR_US, build_chart_payload, resolve_stock_name
 from app.services.symbol_utils import is_plausible_symbol, normalize_symbol
@@ -30,9 +30,9 @@ def quote(symbol: str, market: str = Query("")):
     raw = unquote(symbol or "").strip()
     key = normalize_symbol(raw, market)
     if not key or not is_plausible_symbol(key, market):
-        # 잘못된 입력은 KIS/pykrx를 치지 않음
+        # 잘못된 입력은 증권사 API를 치지 않음
         return QuoteResponse(symbol=raw[:80], name=raw[:80] if raw else "")
-    data = kis_client.get_stock_quote(key, market=market)
+    data = broker.get_stock_quote(key, market=market)
     if not data:
         name = resolve_stock_name(key, market=market or ("KRX" if key.isdigit() else "US"))
         return QuoteResponse(symbol=key, name=name)
@@ -41,13 +41,13 @@ def quote(symbol: str, market: str = Query("")):
 
 @router.get("/orderbook/{symbol:path}", response_model=OrderBookResponse)
 def orderbook(symbol: str, market: str = Query("")):
-    """KIS 호가창 (국내 10호가 / 해외 NASDAQ·NYSE 10호가). 패널 폴링용 짧은 캐시."""
+    """활성 증권사 호가창 (국내 10호가 / 해외 10호가). 패널 폴링용 짧은 캐시."""
     raw = unquote(symbol or "").strip()
     key = normalize_symbol(raw, market)
     mkt = (market or ("KRX" if (key or "").isdigit() else "US")).upper()
     if not key or not is_plausible_symbol(key, market):
         return OrderBookResponse(ok=False, symbol=raw[:80], market=mkt, message="Invalid symbol")
-    data = kis_client.get_stock_orderbook(key, market=mkt)
+    data = broker.get_stock_orderbook(key, market=mkt)
     return OrderBookResponse(**data)
 
 

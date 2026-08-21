@@ -3,6 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/core/config.py -> project root
@@ -19,6 +20,7 @@ class Settings(BaseSettings):
         ),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "Trading Analysis API"
@@ -33,12 +35,32 @@ class Settings(BaseSettings):
     kis_virtual: bool = True
     kis_auth_path: str = "secret.json"
 
+    # Toss Securities Open API (TOSS_* or TOSSINVEST_*)
+    toss_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("TOSS_CLIENT_ID", "TOSSINVEST_CLIENT_ID"),
+    )
+    toss_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("TOSS_CLIENT_SECRET", "TOSSINVEST_CLIENT_SECRET"),
+    )
+    toss_account: str = Field(
+        default="",
+        validation_alias=AliasChoices("TOSS_ACCOUNT", "TOSSINVEST_ACCOUNT"),
+    )
+    toss_api_base_url: str = Field(
+        default="https://openapi.tossinvest.com",
+        validation_alias=AliasChoices("TOSS_API_BASE_URL", "TOSSINVEST_API_BASE_URL"),
+    )
+
     # LLM provider: auto | ollama | nvidia
     # auto = round-robin between available providers with failover
-    llm_provider: str = "auto"
+    llm_provider: str = "nvidia"
     # Embedding provider: ollama | nvidia (keep one for vector dim consistency)
     embed_provider: str = "nvidia"
     llm_failover: bool = True
+    # 테스트용: Ollama 로컬 엔진 비활성 (True로 다시 켤 수 있음)
+    ollama_enabled: bool = False
 
     # Ollama / local
     ollama_base_url: str = "http://localhost:11434"

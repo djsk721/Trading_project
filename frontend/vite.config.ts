@@ -11,5 +11,6 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    allowedHosts: ["varmint-drastic-raking.ngrok-free.dev"],
   },
 });

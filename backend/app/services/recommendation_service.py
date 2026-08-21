@@ -31,6 +31,12 @@ RECOMMEND_SYSTEM = (
     "수익을 보장하는 표현은 금지합니다. 유효한 JSON만 출력하세요."
 )
 
+RECOMMEND_SUMMARY_SYSTEM = (
+    "당신은 증권 리서치 애널리스트입니다. 제공된 종목 정보와 헤드라인만 사용해 "
+    "한국어로 간결한 브리핑을 작성하세요. 헤드라인에 없는 사실은 만들지 마세요. "
+    "투자 권유·수익 보장 표현은 금지합니다. 유효한 JSON만 출력하세요."
+)
+
 
 def _round_px(price: float, market: str) -> float:
     p = float(price or 0)
@@ -203,7 +209,7 @@ def _collect_candidates(
     return scored
 
 
-def _attach_news_briefs(candidates: List[Dict[str, Any]], market: str = "", per_stock: int = 3) -> List[Dict[str, Any]]:
+def _attach_news_briefs(candidates: List[Dict[str, Any]], market: str = "", per_stock: int = 5) -> List[Dict[str, Any]]:
     enriched = []
     for item in candidates:
         headlines: List[str] = []
@@ -217,6 +223,196 @@ def _attach_news_briefs(candidates: List[Dict[str, Any]], market: str = "", per_
         except Exception as e:
             log.warning("news brief failed for %s: %s", item["symbol"], e)
         enriched.append({**item, "headlines": headlines})
+    return enriched
+
+
+def _clip_text(text: str, max_len: int) -> str:
+    s = (text or "").strip()
+    if len(s) <= max_len:
+        return s
+    return s[: max(1, max_len - 1)] + "…"
+
+
+def _trend_status_label(trend: str, rsi: float) -> str:
+    if rsi >= 70:
+        return "과열 주의"
+    if rsi <= 30:
+        return "과매도 구간"
+    t = str(trend or "").upper()
+    if t == "UP":
+        return "상승 추세"
+    if t == "DOWN":
+        return "하락 추세"
+    return "관망"
+
+
+def _rsi_metric_note(rsi: float) -> str:
+    r = float(rsi or 50)
+    if r >= 70:
+        return f"RSI {r:.1f} · 과열 부담"
+    if r <= 30:
+        return f"RSI {r:.1f} · 과매도"
+    if r >= 55:
+        return f"RSI {r:.1f} · 과열 부담 낮음"
+    return f"RSI {r:.1f} · 중립"
+
+
+def _normalize_brief_fields(raw: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+    """스캔 카드용 구조화 브리핑."""
+    rsi = float(item.get("rsi") or 50)
+    trend = str(item.get("trend") or "SIDEWAYS")
+    highlights = raw.get("highlights") or []
+    if isinstance(highlights, str):
+        highlights = [highlights]
+    highlights = [_clip_text(str(h), 28) for h in highlights if str(h).strip()][:2]
+    if not highlights:
+        highlights = [_clip_text(str(r), 28) for r in (item.get("reasons") or [])[:2]]
+
+    status_label = str(raw.get("status_label") or "").strip() or _trend_status_label(trend, rsi)
+    metric_note = str(raw.get("metric_note") or "").strip() or _rsi_metric_note(rsi)
+    detail = str(
+        raw.get("detail_summary") or raw.get("summary") or raw.get("ai_summary") or ""
+    ).strip()
+    sector = str(raw.get("sector") or "").strip()
+
+    return {
+        "sector": sector,
+        "status_label": _clip_text(status_label, 16),
+        "highlights": highlights,
+        "metric_note": _clip_text(metric_note, 40),
+        "detail_summary": detail[:600],
+        "ai_summary": detail[:600],
+    }
+
+
+def _fallback_stock_summary(item: Dict[str, Any]) -> Dict[str, Any]:
+    headlines = [h for h in (item.get("headlines") or []) if h][:2]
+    hl: List[str] = []
+    for h in headlines:
+        hl.append(_clip_text(h, 28))
+    if not hl:
+        hl = [_clip_text(r, 28) for r in (item.get("reasons") or [])[:2]]
+    rsi = float(item.get("rsi") or 50)
+    trend = str(item.get("trend") or "SIDEWAYS")
+    news_line = " · ".join(headlines) if headlines else "최근 헤드라인 수집 제한"
+    detail = (
+        f"{item.get('name', item.get('symbol', ''))} — {news_line}. "
+        f"기술점수 {item.get('score', 0)}, { _trend_status_label(trend, rsi) }."
+    )
+    return _normalize_brief_fields(
+        {
+            "sector": "",
+            "status_label": _trend_status_label(trend, rsi),
+            "highlights": hl,
+            "metric_note": _rsi_metric_note(rsi),
+            "detail_summary": detail,
+        },
+        item,
+    )
+
+
+def _summarize_stock_batch(
+    batch: List[Dict[str, Any]],
+    provider: str = "",
+) -> Dict[str, Dict[str, Any]]:
+    """LLM으로 종목별 스캔 카드용 구조화 브리핑 생성."""
+    if not batch:
+        return {}
+    settings = get_settings()
+    payload = [
+        {
+            "symbol": c["symbol"],
+            "name": c["name"],
+            "market": c.get("market", "KRX"),
+            "price": c.get("price"),
+            "change_pct": c.get("change_pct"),
+            "score": c.get("score"),
+            "rsi": c.get("rsi"),
+            "trend": c.get("trend"),
+            "headlines": c.get("headlines") or [],
+        }
+        for c in batch
+    ]
+    user_prompt = f"""아래 종목 각각에 대해 **스캔 가능한 짧은 카드 데이터**를 작성하세요.
+
+입력:
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+
+반드시 아래 JSON만 출력:
+{{
+  "summaries": [
+    {{
+      "symbol": "005930",
+      "sector": "반도체 (25자 이내)",
+      "status_label": "상승 추세|관망|과열 주의|하락 추세 중 하나",
+      "highlights": [
+        "핵심 근거 1 — 25자 이내",
+        "핵심 근거 2 — 25자 이내"
+      ],
+      "metric_note": "RSI 56.1 · 과열 부담 낮음 (40자 이내)",
+      "detail_summary": "펼칠 때 보는 상세 설명 3~5문장. 분야·뉴스·기술 맥락."
+    }}
+  ]
+}}
+
+규칙:
+- summaries는 입력 symbol만 사용
+- highlights는 정확히 2개, 각 25자 이내, 한 정보=한 줄
+- headlines에 없는 뉴스·실적은 쓰지 말 것
+- status_label·metric_note는 스캔용 짧은 라벨
+- detail_summary만 긴 문단 허용
+- 한국어만
+"""
+
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        raw, _ = get_llm_router().chat(
+            messages=[
+                {"role": "system", "content": RECOMMEND_SUMMARY_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            provider=provider or None,
+            temperature=0.25,
+            num_predict=min(settings.max_new_tokens, 2800),
+        )
+        parsed = _extract_json(raw)
+        if not parsed or "summaries" not in parsed:
+            raise ValueError("invalid summary JSON")
+        allowed = {c["symbol"] for c in batch}
+        for row in parsed.get("summaries") or []:
+            sym = str(row.get("symbol", "")).strip()
+            if sym not in allowed:
+                continue
+            base_item = next((c for c in batch if c["symbol"] == sym), {})
+            out[sym] = _normalize_brief_fields(row, base_item)
+    except Exception as e:
+        log.warning("stock summary batch failed (%s items): %s", len(batch), e)
+
+    for item in batch:
+        sym = item["symbol"]
+        if sym not in out:
+            out[sym] = _fallback_stock_summary(item)
+    return out
+
+
+def _attach_ai_summaries(
+    candidates: List[Dict[str, Any]],
+    provider: str = "",
+    batch_size: int = 5,
+) -> List[Dict[str, Any]]:
+    """상위 shortlist 종목에 sector·ai_summary 부여."""
+    if not candidates:
+        return []
+    batch_size = max(1, min(int(batch_size or 5), 10))
+    summary_map: Dict[str, Dict[str, str]] = {}
+    for i in range(0, len(candidates), batch_size):
+        chunk = candidates[i : i + batch_size]
+        summary_map.update(_summarize_stock_batch(chunk, provider=provider))
+
+    enriched: List[Dict[str, Any]] = []
+    for item in candidates:
+        extra = summary_map.get(item["symbol"]) or _fallback_stock_summary(item)
+        enriched.append({**item, **extra})
     return enriched
 
 
@@ -435,6 +631,12 @@ def _scan_item_view(row: Dict[str, Any]) -> dict:
         "macd_signal": row["macd_signal"],
         "trend": row["trend"],
         "reasons": row.get("reasons") or [],
+        "sector": str(row.get("sector") or ""),
+        "status_label": str(row.get("status_label") or ""),
+        "highlights": list(row.get("highlights") or [])[:2],
+        "metric_note": str(row.get("metric_note") or ""),
+        "detail_summary": str(row.get("detail_summary") or row.get("ai_summary") or ""),
+        "ai_summary": str(row.get("ai_summary") or row.get("detail_summary") or ""),
     }
 
 
@@ -505,11 +707,17 @@ def build_daily_recommendations(
     candidates.sort(key=lambda x: x["score"], reverse=True)
     for i, item in enumerate(candidates, start=1):
         item["scan_rank"] = i
-    scan_items = [_scan_item_view(c) for c in candidates]
 
-    # 2) 상위 shortlist만 뉴스 (종목별 market 사용)
+    # 2) 상위 shortlist: 뉴스 + AI 브리핑 (분야·뉴스·개요)
     shortlist = candidates[:shortlist_n]
-    shortlist = _attach_news_briefs(shortlist, per_stock=3)
+    shortlist = _attach_news_briefs(shortlist, per_stock=5)
+    shortlist = _attach_ai_summaries(shortlist, provider=provider)
+    summary_by_symbol = {s["symbol"]: s for s in shortlist}
+
+    scan_items = []
+    for c in candidates:
+        merged = {**c, **summary_by_symbol.get(c["symbol"], {})}
+        scan_items.append(_scan_item_view(merged))
 
     # 3) 선택 AI 엔진으로 최종 선정 (시장 범위에 맞는 순위)
     picks, commentary, used_llm, used_provider = _llm_rank(
@@ -522,6 +730,7 @@ def build_daily_recommendations(
 
     items = []
     for p in picks:
+        extra = summary_by_symbol.get(p["symbol"], {})
         items.append({
             "rank": p["rank"],
             "symbol": p["symbol"],
@@ -537,6 +746,18 @@ def build_daily_recommendations(
             "stance": p.get("stance", "watch"),
             "buy_price": float(p.get("buy_price") or 0),
             "sell_price": float(p.get("sell_price") or 0),
+            "sector": str(extra.get("sector") or p.get("sector") or ""),
+            "status_label": str(extra.get("status_label") or p.get("status_label") or ""),
+            "highlights": list(extra.get("highlights") or p.get("highlights") or [])[:2],
+            "metric_note": str(extra.get("metric_note") or p.get("metric_note") or ""),
+            "detail_summary": str(
+                extra.get("detail_summary") or extra.get("ai_summary")
+                or p.get("detail_summary") or p.get("ai_summary") or ""
+            ),
+            "ai_summary": str(
+                extra.get("ai_summary") or extra.get("detail_summary")
+                or p.get("ai_summary") or p.get("detail_summary") or ""
+            ),
         })
 
     result = {

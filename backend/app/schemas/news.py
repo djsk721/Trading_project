@@ -14,6 +14,8 @@ class NewsItem(BaseModel):
     stock_name: str = ""
     importance: Optional[int] = None
     importance_reason: str = ""
+    sentiment: str = ""
+    sentiment_reason: str = ""
     has_ai_summary: bool = False
 
 
@@ -37,9 +39,10 @@ class MarketNewsItem(BaseModel):
     published_at: Optional[str] = None
     category: str = ""
     category_label: str = ""
-    has_ai_summary: bool = False
     importance: Optional[int] = None
     importance_reason: str = ""
+    sentiment: str = ""
+    sentiment_reason: str = ""
 
 
 class TabDigest(BaseModel):
@@ -86,6 +89,8 @@ class NewsSummaryResponse(BaseModel):
     summary_ko: str = ""
     importance: int = 0
     importance_reason: str = ""
+    sentiment: str = ""
+    sentiment_reason: str = ""
     provider: str = ""
     updated_at: str = ""
     cached: bool = False

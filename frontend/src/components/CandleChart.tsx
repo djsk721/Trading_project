@@ -145,15 +145,15 @@ type OhlcView = {
 };
 
 const INDICATOR_DEFS: { key: IndicatorKey; label: string; defaultOn: boolean }[] = [
-  { key: "sma20", label: "SMA20", defaultOn: true },
-  { key: "sma60", label: "SMA60", defaultOn: true },
-  { key: "sma120", label: "SMA120", defaultOn: true },
-  { key: "ema20", label: "EMA20", defaultOn: false },
-  { key: "bb", label: "BB(20,2)", defaultOn: true },
+  { key: "sma20", label: "이평 20", defaultOn: true },
+  { key: "sma60", label: "이평 60", defaultOn: true },
+  { key: "sma120", label: "이평 120", defaultOn: true },
+  { key: "ema20", label: "지수이평 20", defaultOn: false },
+  { key: "bb", label: "볼린저(20,2)", defaultOn: true },
   { key: "volume", label: "거래량", defaultOn: true },
   { key: "rsi", label: "RSI(14)", defaultOn: true },
   { key: "macd", label: "MACD", defaultOn: true },
-  { key: "stoch", label: "Stoch", defaultOn: false },
+  { key: "stoch", label: "스토캐스틱", defaultOn: false },
 ];
 
 type IndLegend = {
@@ -491,11 +491,11 @@ export default function CandleChart({
 
   const colors = useMemo(() => themeColors(theme), [theme]);
   const chartHeight = useMemo(() => {
-    let h = 440;
-    if (toggles.volume) h += 80;
-    if (toggles.rsi) h += 100;
-    if (toggles.macd) h += 100;
-    if (toggles.stoch) h += 90;
+    let h = 340;
+    if (toggles.volume) h += 64;
+    if (toggles.rsi) h += 80;
+    if (toggles.macd) h += 80;
+    if (toggles.stoch) h += 72;
     return h;
   }, [toggles]);
   const heightPlan = useMemo(
@@ -1496,38 +1496,38 @@ export default function CandleChart({
                 확정
               </span>
             )}
-            <span>O {formatPrice(ohlc.open, market, symbol)}</span>
-            <span>H {formatPrice(ohlc.high, market, symbol)}</span>
-            <span>L {formatPrice(ohlc.low, market, symbol)}</span>
-            <span>C {formatPrice(ohlc.close, market, symbol)}</span>
-            <span>V {formatVol(ohlc.volume)}</span>
+            <span>시가 {formatPrice(ohlc.open, market, symbol)}</span>
+            <span>고가 {formatPrice(ohlc.high, market, symbol)}</span>
+            <span>저가 {formatPrice(ohlc.low, market, symbol)}</span>
+            <span>종가 {formatPrice(ohlc.close, market, symbol)}</span>
+            <span>거래량 {formatVol(ohlc.volume)}</span>
           </div>
         )}
         {!empty && (
           <div className="ind-legend" aria-label="지표 범례">
             {toggles.sma20 && (
               <span style={{ color: colors.sma }}>
-                SMA20 {indLegend.sma20 != null ? formatPrice(indLegend.sma20, market, symbol) : "-"}
+                이평20 {indLegend.sma20 != null ? formatPrice(indLegend.sma20, market, symbol) : "-"}
               </span>
             )}
             {toggles.sma60 && (
               <span style={{ color: colors.sma60 }}>
-                SMA60 {indLegend.sma60 != null ? formatPrice(indLegend.sma60, market, symbol) : "-"}
+                이평60 {indLegend.sma60 != null ? formatPrice(indLegend.sma60, market, symbol) : "-"}
               </span>
             )}
             {toggles.sma120 && (
               <span style={{ color: colors.sma120 }}>
-                SMA120 {indLegend.sma120 != null ? formatPrice(indLegend.sma120, market, symbol) : "-"}
+                이평120 {indLegend.sma120 != null ? formatPrice(indLegend.sma120, market, symbol) : "-"}
               </span>
             )}
             {toggles.ema20 && (
               <span style={{ color: colors.ema }}>
-                EMA20 {indLegend.ema20 != null ? formatPrice(indLegend.ema20, market, symbol) : "-"}
+                지수이평20 {indLegend.ema20 != null ? formatPrice(indLegend.ema20, market, symbol) : "-"}
               </span>
             )}
             {toggles.bb && (
               <span style={{ color: colors.bb }}>
-                BB(20,2){" "}
+                볼린저{" "}
                 {indLegend.bbMiddle != null ? formatPrice(indLegend.bbMiddle, market, symbol) : "-"}
               </span>
             )}
@@ -1542,14 +1542,14 @@ export default function CandleChart({
                 {indLegend.macd != null ? formatMacdValue(indLegend.macd, market, symbol) : "-"}
                 {" / "}
                 <span style={{ color: colors.signal }}>
-                  Sig{" "}
+                  신호{" "}
                   {indLegend.macdSignal != null
                     ? formatMacdValue(indLegend.macdSignal, market, symbol)
                     : "-"}
                 </span>
                 {indLegend.macdHist != null && (
                   <>
-                    {" · "}Hist {indLegend.macdHist >= 0 ? "+" : ""}
+                    {" · "}막대 {indLegend.macdHist >= 0 ? "+" : ""}
                     {formatMacdValue(indLegend.macdHist, market, symbol)}
                   </>
                 )}

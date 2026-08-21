@@ -64,6 +64,9 @@ class AnalysisResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     kis_connected: bool = False
+    broker_connected: bool = False
+    active_broker: str = "kis"
+    broker_hint: str = ""
     ollama_connected: bool = False
     nvidia_connected: bool = False
     ai_connected: bool = False

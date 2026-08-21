@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, MarketNewsItem, NewsSummary, TabDigest } from "../api";
 import { formatNewsTime } from "../formatTime";
 import NewsBriefingModal, { parseBriefing } from "./NewsBriefingModal";
+import NewsToneChip from "./NewsToneChip";
 
 type Props = {
   open: boolean;
@@ -269,6 +270,7 @@ export default function MarketPulsePanel({ open, onClose, provider = "nvidia" }:
                     중요도 {n.importance}
                   </span>
                 )}
+                <NewsToneChip tone={n.sentiment} />
                 <span className="chip">{n.source || "언론사"}</span>
                 <span className="chip" title={n.published_at || ""}>
                   {formatNewsTime(n.published_at)}

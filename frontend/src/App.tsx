@@ -12,14 +12,20 @@ import {
   RuleAnalysis,
   ScanItem,
 } from "./api";
+import AccountWorkspace from "./components/AccountWorkspace";
 import CandleChart, { ChartTimeframe } from "./components/CandleChart";
+import LoginScreen, { BrokerId } from "./components/LoginScreen";
 import MacroBoard from "./components/MacroBoard";
 import MarketPulsePanel from "./components/MarketPulsePanel";
 import NewsBriefingModal from "./components/NewsBriefingModal";
+import NewsToneChip from "./components/NewsToneChip";
 import OrderBookPanel from "./components/OrderBookPanel";
+import RecBriefCard from "./components/RecBriefCard";
+import Sec13FWorkspace from "./components/Sec13FWorkspace";
 import { formatNewsTime } from "./formatTime";
+import { llmEngineKo, macdKo, trendKo } from "./labels";
 
-type Workspace = "desk" | "recommend" | "account";
+type Workspace = "desk" | "recommend" | "account" | "sec13f";
 type RecMarket = "KRX" | "US" | "ALL";
 type Tab = "ai" | "trade";
 type Theme = "light" | "dark";
@@ -195,16 +201,56 @@ function persistRecStore(patch: {
 
 function recModeFromApi(r: { used_llm?: boolean; provider?: string }, hasItems: boolean) {
   if (!hasItems) return "";
-  const engine =
-    r.provider && r.provider !== "none"
-      ? r.provider === "nvidia"
-        ? "NVIDIA"
-        : r.provider === "ollama"
-          ? "로컬"
-          : r.provider
-      : "";
+  const engine = llmEngineKo(r.provider);
   if (r.used_llm) return engine ? `AI 추천 (${engine})` : "AI 추천";
   return "기술지표 추천";
+}
+
+const SESSION_KEY = "td_session";
+const PANEL_STOCK = "td_stock_open";
+const PANEL_CHART = "td_chart_open";
+const PANEL_AI = "td_ai_open";
+const PANEL_NEWS = "td_news_open";
+
+function loadPanelOpen(key: string) {
+  return localStorage.getItem(key) !== "0";
+}
+
+function savePanelOpen(key: string, open: boolean) {
+  localStorage.setItem(key, open ? "1" : "0");
+}
+
+function FoldHead({
+  title,
+  open,
+  onToggle,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="side-news-head section-fold-head">
+      <div className="section-title" style={{ margin: 0 }}>
+        {title}
+      </div>
+      <button type="button" className="fold-btn" onClick={onToggle}>
+        {open ? "접기" : "펼치기"}
+      </button>
+    </div>
+  );
+}
+
+function loadSession(): { user: string; broker: BrokerId } | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.user === "test") return parsed;
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 export default function App() {
@@ -274,6 +320,30 @@ export default function App() {
   const [accountLoading, setAccountLoading] = useState(false);
   const [chartTf, setChartTf] = useState<ChartTimeframe>("day");
   const [marketPulseOpen, setMarketPulseOpen] = useState(false);
+  const [session, setSession] = useState(() => loadSession());
+  const [newsOpen, setNewsOpen] = useState(() => loadPanelOpen(PANEL_NEWS));
+  const [stockOpen, setStockOpen] = useState(() => loadPanelOpen(PANEL_STOCK));
+  const [chartOpen, setChartOpen] = useState(() => loadPanelOpen(PANEL_CHART));
+  const [aiOpen, setAiOpen] = useState(() => loadPanelOpen(PANEL_AI));
+  const [newsTone, setNewsTone] = useState<"all" | "bullish" | "bearish">("all");
+
+  const recTopBriefs = useMemo(
+    () =>
+      scanItems
+        .filter(
+          (r) =>
+            r.rank > 0 &&
+            r.rank <= 20 &&
+            (r.highlights?.length || r.detail_summary || r.ai_summary || r.reasons?.length)
+        )
+        .sort((a, b) => a.rank - b.rank),
+    [scanItems]
+  );
+
+  const pickBySymbol = useMemo(
+    () => new Map(recs.map((r) => [r.symbol, r])),
+    [recs]
+  );
 
   const priceColor = useMemo(() => {
     const rate = quote?.rate ?? Number(chart?.summary?.price_change ?? 0);
@@ -386,17 +456,47 @@ export default function App() {
     try {
       const a = await api.account();
       setAccount(a);
-    } catch {
-      setAccount(null);
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : "계좌 API 호출 실패. 백엔드(8010) 실행 여부를 확인하세요.";
+      setAccount({
+        connected: false,
+        account: "",
+        virtual: false,
+        total_eval_krw: 0,
+        purchase_amount: 0,
+        current_amount: 0,
+        profit_loss: 0,
+        profit_loss_rate: 0,
+        deposits: [],
+        domestic: { deposit_krw: 0, stocks_value: 0, holdings: [] },
+        overseas: {
+          deposit_usd: 0,
+          deposit_krw: 0,
+          stocks_value: 0,
+          holdings: [],
+        },
+        holdings: [],
+        error: msg,
+      });
     } finally {
       setAccountLoading(false);
     }
   }
 
-  // StrictMode 이중 호출 대비: 마운트 시 순차 로딩 (계좌 → 시세)
+  // 로그인 증권사 선택 → 백엔드 활성 브로커 동기화 후 연결 상태·계좌 조회
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (session?.broker) {
+        try {
+          await api.saveBrokerKeys({ active: session.broker });
+        } catch {
+          /* ignore */
+        }
+      }
       try {
         const h = await api.health();
         if (!cancelled) setHealth(h);
@@ -410,7 +510,7 @@ export default function App() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [session?.broker]);
 
   useEffect(() => {
     api.popular(market).then((r) => setPopular(r.items || [])).catch(() => setPopular([]));
@@ -691,19 +791,31 @@ export default function App() {
   const price = quote?.price || Number(chart?.summary?.price || 0);
   const rate = quote?.rate ?? Number(chart?.summary?.price_change ?? 0);
 
+  if (!session) {
+    return (
+      <LoginScreen
+        onLogin={(payload) => {
+          localStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+          setSession(payload);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-left">
           <h1 className="brand">
-            Trading<span>Desk</span>
+            트레이딩<span>데스크</span>
           </h1>
           <nav className="workspace-nav" aria-label="주요 화면">
             {(
               [
-                ["desk", "종목 데스크"],
-                ["recommend", "일일 추천"],
-                ["account", "내 계좌"],
+                ["desk", "데스크"],
+                ["recommend", "추천"],
+                ["account", "계좌"],
+                ["sec13f", "13F"],
               ] as [Workspace, string][]
             ).map(([id, label]) => (
               <button
@@ -717,11 +829,23 @@ export default function App() {
             ))}
           </nav>
           <div className="top-status">
-            <span className="status-pill">
-              <span className={`status-dot ${health?.kis_connected ? "on" : "off"}`} />
-              거래연동 {health?.kis_connected ? "연결됨" : "미연결"}
+            <span className="status-pill" title={health?.broker_connected ? "거래 연결됨" : health?.broker_hint || "거래 미연결"}>
+              <span className={`status-dot ${health?.broker_connected ? "on" : "off"}`} />
+              {health?.active_broker === "toss" ? "토스" : "한투"}
             </span>
-            <span className="status-pill">
+            {!health?.broker_connected && health?.broker_hint ? (
+              <span className="muted" style={{ fontSize: "0.72rem", maxWidth: 280 }}>
+                {health.broker_hint}
+              </span>
+            ) : null}
+            <span
+              className="status-pill"
+              title={
+                health?.ai_connected || health?.ollama_connected || health?.nvidia_connected
+                  ? "AI 준비됨"
+                  : "AI 연결 안 됨"
+              }
+            >
               <span
                 className={`status-dot ${
                   health?.ai_connected || health?.ollama_connected || health?.nvidia_connected
@@ -729,15 +853,7 @@ export default function App() {
                     : "off"
                 }`}
               />
-              AI{" "}
-              {health?.ai_connected || health?.ollama_connected || health?.nvidia_connected
-                ? "준비됨"
-                : "오프라인"}
-              {health?.ollama_connected || health?.nvidia_connected
-                ? ` · 로컬${health?.ollama_connected ? "✓" : "–"}/NVIDIA${
-                    health?.nvidia_connected ? "✓" : "–"
-                  }`
-                : ""}
+              AI
             </span>
           </div>
         </div>
@@ -753,14 +869,75 @@ export default function App() {
             onClick={() => setMarketPulseOpen(true)}
             title="한국·미국·세계 시황 뉴스"
           >
-            시황 뉴스
+            시황
+          </button>
+          {workspace === "desk" && (!stockOpen || !chartOpen || !aiOpen || !newsOpen) && (
+            <div className="restore-group" aria-label="접힌 패널 펼치기">
+              {!stockOpen && (
+                <button
+                  type="button"
+                  className="restore-chip"
+                  onClick={() => {
+                    setStockOpen(true);
+                    savePanelOpen(PANEL_STOCK, true);
+                  }}
+                >
+                  종목
+                </button>
+              )}
+              {!chartOpen && (
+                <button
+                  type="button"
+                  className="restore-chip"
+                  onClick={() => {
+                    setChartOpen(true);
+                    savePanelOpen(PANEL_CHART, true);
+                  }}
+                >
+                  차트
+                </button>
+              )}
+              {!aiOpen && (
+                <button
+                  type="button"
+                  className="restore-chip"
+                  onClick={() => {
+                    setAiOpen(true);
+                    savePanelOpen(PANEL_AI, true);
+                  }}
+                >
+                  AI
+                </button>
+              )}
+              {!newsOpen && (
+                <button
+                  type="button"
+                  className="restore-chip"
+                  onClick={() => {
+                    setNewsOpen(true);
+                    savePanelOpen(PANEL_NEWS, true);
+                  }}
+                >
+                  뉴스
+                </button>
+              )}
+            </div>
+          )}
+          <button
+            className="btn ghost"
+            onClick={() => {
+              localStorage.removeItem(SESSION_KEY);
+              setSession(null);
+            }}
+          >
+            로그아웃
           </button>
           <button
             className="btn ghost"
             onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
             title="테마 전환"
           >
-            {theme === "light" ? "다크 모드" : "라이트 모드"}
+            {theme === "light" ? "다크" : "라이트"}
           </button>
           <button
             className="btn icon-btn"
@@ -784,13 +961,26 @@ export default function App() {
 
       <MacroBoard />
 
-      <div className={`app app-workspace-${workspace}`}>
+      <div
+        className={`app app-workspace-${workspace}${
+          workspace === "desk" && !newsOpen ? " news-collapsed" : ""
+        }${workspace === "desk" && !stockOpen && !aiOpen ? " left-collapsed" : ""}`}
+      >
+        {(workspace === "recommend" || (workspace === "desk" && (stockOpen || aiOpen))) && (
         <aside className="panel">
           {workspace === "desk" && (
             <>
-              <p className="sub">종목 선택 · 차트 · AI 분석 · 뉴스</p>
-
-              <div className="section-title">종목</div>
+              <FoldHead
+                title="종목"
+                open={stockOpen}
+                onToggle={() => {
+                  const next = !stockOpen;
+                  setStockOpen(next);
+                  savePanelOpen(PANEL_STOCK, next);
+                }}
+              />
+              {stockOpen && (
+                <>
               <div className="field">
                 <label>시장</label>
                 <select
@@ -800,15 +990,15 @@ export default function App() {
                     setMarket(next);
                     if (next === "US") {
                       setSymbol("AAPL");
-                      setStockName("Apple");
+                      setStockName("애플");
                     } else {
                       setSymbol("005930");
-                      setStockName("Samsung Electronics");
+                      setStockName("삼성전자");
                     }
                   }}
                 >
-                  <option value="KRX">국내 (KRX)</option>
-                  <option value="US">해외 (US)</option>
+                  <option value="KRX">국내</option>
+                  <option value="US">해외</option>
                 </select>
               </div>
               <div className="field">
@@ -847,15 +1037,28 @@ export default function App() {
               >
                 {accountLoading ? "계좌 조회 중..." : "내 계좌 보기"}
               </button>
+                </>
+              )}
 
-              <div className="section-title">AI 분석</div>
+              <FoldHead
+                title="AI 분석"
+                open={aiOpen}
+                onToggle={() => {
+                  const next = !aiOpen;
+                  setAiOpen(next);
+                  savePanelOpen(PANEL_AI, next);
+                }}
+              />
+              {aiOpen && (
+                <>
               <div className="field">
                 <label>AI 엔진</label>
-                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)}>
-                  <option value="nvidia">NVIDIA API</option>
-                  <option value="ollama">로컬 (Ollama)</option>
-                  <option value="auto">자동 전환 (번갈아 사용)</option>
+                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} disabled>
+                  <option value="nvidia">클라우드 AI</option>
                 </select>
+                <p className="muted" style={{ marginTop: 4, fontSize: "0.75rem" }}>
+                  테스트 모드: 로컬 AI(Ollama) 비활성
+                </p>
               </div>
               <div className="field">
                 <label>분석 유형</label>
@@ -875,7 +1078,7 @@ export default function App() {
               <div className="field">
                 <label>질문</label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -892,6 +1095,8 @@ export default function App() {
                 {loading ? "분석 중..." : "AI 분석 실행"}
               </button>
               {error && <div className="error-box">{error}</div>}
+                </>
+              )}
             </>
           )}
 
@@ -915,11 +1120,12 @@ export default function App() {
               <div className="section-title">추천 설정</div>
               <div className="field">
                 <label>AI 엔진</label>
-                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)}>
-                  <option value="nvidia">NVIDIA API</option>
-                  <option value="ollama">로컬 (Ollama)</option>
-                  <option value="auto">자동 전환 (번갈아 사용)</option>
+                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} disabled>
+                  <option value="nvidia">클라우드 AI</option>
                 </select>
+                <p className="muted" style={{ marginTop: 4, fontSize: "0.75rem" }}>
+                  테스트 모드: 로컬 AI(Ollama) 비활성
+                </p>
               </div>
               <button
                 className="btn btn-block"
@@ -946,24 +1152,8 @@ export default function App() {
               {error && <div className="error-box">{error}</div>}
             </>
           )}
-
-          {workspace === "account" && (
-            <>
-              <p className="sub">통합 잔고 · 국내/해외 보유</p>
-              <div className="section-title">계좌</div>
-              <button className="btn btn-block" onClick={loadAccount} disabled={accountLoading}>
-                {accountLoading ? "조회 중..." : "계좌 새로고침"}
-              </button>
-              <button
-                className="btn secondary btn-block"
-                style={{ marginTop: 8 }}
-                onClick={() => goWorkspace("desk")}
-              >
-                종목 데스크로
-              </button>
-            </>
-          )}
         </aside>
+        )}
 
         <main className="panel">
           {workspace === "desk" && (
@@ -980,20 +1170,31 @@ export default function App() {
                     {rate.toFixed(2)}%
                   </div>
                 </div>
+                <FoldHead
+                  title="차트"
+                  open={chartOpen}
+                  onToggle={() => {
+                    const next = !chartOpen;
+                    setChartOpen(next);
+                    savePanelOpen(PANEL_CHART, next);
+                  }}
+                />
               </div>
 
+              {chartOpen && (
+                <>
               <div className="metrics">
                 <div className="metric">
-                  <div className="label">RSI(14)</div>
+                  <div className="label">상대강도 RSI(14)</div>
                   <div className="value">{Number(chart?.summary?.rsi ?? 0).toFixed(1)}</div>
                 </div>
                 <div className="metric">
                   <div className="label">MACD</div>
-                  <div className="value">{String(chart?.summary?.macd_signal ?? "-")}</div>
+                  <div className="value">{macdKo(String(chart?.summary?.macd_signal ?? "-"))}</div>
                 </div>
                 <div className="metric">
-                  <div className="label">추세</div>
-                  <div className="value">{String(chart?.summary?.trend_long ?? "-")}</div>
+                  <div className="label">중기 추세</div>
+                  <div className="value">{trendKo(String(chart?.summary?.trend_long ?? "-"))}</div>
                 </div>
                 <div className="metric">
                   <div className="label">거래량 비율</div>
@@ -1012,6 +1213,8 @@ export default function App() {
                 symbol={symbol}
                 market={market}
               />
+                </>
+              )}
 
               <div className="tabs">
                 {(
@@ -1030,7 +1233,12 @@ export default function App() {
                 ))}
               </div>
 
-              {tab === "ai" && (
+              {tab === "ai" && !aiOpen && (
+                <p className="muted" style={{ marginTop: 8 }}>
+                  AI 분석을 접었습니다.
+                </p>
+              )}
+              {tab === "ai" && aiOpen && (
                 <div className="list">
                   <article className="card-item">
                     <h4>
@@ -1096,12 +1304,12 @@ export default function App() {
                         <div className="rule-metrics">
                           <span>RSI {String(ruleAnalysis.metrics.rsi ?? "-")}</span>
                           <span>
-                            MACD {String(ruleAnalysis.metrics.macd ?? "-")} / Sig{" "}
+                            MACD {String(ruleAnalysis.metrics.macd ?? "-")} / 신호{" "}
                             {String(ruleAnalysis.metrics.macd_signal_line ?? "-")}
                           </span>
-                          <span>Hist {String(ruleAnalysis.metrics.macd_histogram ?? "-")}</span>
-                          <span>BB {String(ruleAnalysis.metrics.bb_position ?? "-")}</span>
-                          <span>Vol {String(ruleAnalysis.metrics.volume_ratio ?? "-")}x</span>
+                          <span>막대 {String(ruleAnalysis.metrics.macd_histogram ?? "-")}</span>
+                          <span>볼린저 {String(ruleAnalysis.metrics.bb_position ?? "-")}</span>
+                          <span>거래량 {String(ruleAnalysis.metrics.volume_ratio ?? "-")}배</span>
                         </div>
                         <ul className="rule-list">
                           {ruleAnalysis.rules.map((r) => (
@@ -1126,7 +1334,7 @@ export default function App() {
                     <h4>AI 분석 결과</h4>
                     {answerProvider && (
                       <p className="muted" style={{ marginBottom: 8 }}>
-                        사용 엔진: {answerProvider === "nvidia" ? "NVIDIA API" : "로컬"}
+                        사용 엔진: {llmEngineKo(answerProvider) || "로컬 AI"}
                         {" · "}룰 체크리스트를 반영해 평가합니다
                       </p>
                     )}
@@ -1256,7 +1464,7 @@ export default function App() {
               </div>
               <p className="muted">
                 {recMeta.universe > 0
-                  ? `유니버스 ${recMeta.universe} → 스캔 ${recMeta.scanned} → shortlist ${recMeta.shortlist}`
+                  ? `종목풀 ${recMeta.universe} → 스캔 ${recMeta.scanned} → 추린 후보 ${recMeta.shortlist}`
                   : "왼쪽에서 범위를 고른 뒤 일일 추천을 실행하세요."}
               </p>
               {(recs.length > 0 || scanItems.length > 0) && (
@@ -1270,7 +1478,7 @@ export default function App() {
                     스캔 결과 전체
                   </label>
                   {recMeta.source ? (
-                    <span className="muted">universe: {recMeta.source}</span>
+                    <span className="muted">종목풀: {recMeta.source}</span>
                   ) : null}
                 </div>
               )}
@@ -1280,59 +1488,39 @@ export default function App() {
                   <p className="answer">{recCommentary}</p>
                 </article>
               )}
-              {!showScanAll && recs.length === 0 && (
+              {recTopBriefs.length > 0 && !showScanAll && (
+                <section className="rec-brief-section">
+                  <h4 className="rec-brief-title">상위 20 종목</h4>
+                  <p className="muted rec-brief-sub">
+                    상태 · 핵심 수치 · 추천 근거 2줄 — 상세는 펼쳐서 확인
+                  </p>
+                  <div className="rec-brief-grid">
+                    {recTopBriefs.map((row) => (
+                      <RecBriefCard
+                        key={`brief-${row.market}-${row.symbol}`}
+                        row={row}
+                        pick={pickBySymbol.get(row.symbol) || null}
+                        onOpenChart={() => openSymbolOnDesk(row.symbol, row.market)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+              {!showScanAll && recs.length === 0 && recTopBriefs.length === 0 && (
                 <p className="muted">일일 추천을 실행하면 AI Picks가 여기에 표시됩니다.</p>
               )}
-              {!showScanAll &&
-                recs.map((r) => (
-                  <article className="card-item" key={r.symbol}>
-                    <h4>
-                      #{r.rank} {r.name} ({r.symbol}) · {r.score}점
-                      <span className="chip" style={{ marginLeft: 8 }}>
-                        {r.market === "KRX" ? "국내" : "해외"}
-                      </span>
-                      {r.stance ? (
-                        <span className="chip accent" style={{ marginLeft: 8 }}>
-                          {STANCE_LABEL[r.stance] || r.stance}
-                        </span>
-                      ) : null}
-                    </h4>
-                    <p>
-                      {r.price.toLocaleString()} · {r.change_pct >= 0 ? "+" : ""}
-                      {r.change_pct}% · RSI {r.rsi} · {r.macd_signal} · {r.trend}
-                    </p>
-                    <div className="rec-targets">
-                      <span>
-                        권장 매수{" "}
-                        <strong>
-                          {r.buy_price
-                            ? r.market === "KRX"
-                              ? Math.round(r.buy_price).toLocaleString("ko-KR")
-                              : r.buy_price.toLocaleString()
-                            : "-"}
-                        </strong>
-                      </span>
-                      <span>
-                        권장 매도{" "}
-                        <strong>
-                          {r.sell_price
-                            ? r.market === "KRX"
-                              ? Math.round(r.sell_price).toLocaleString("ko-KR")
-                              : r.sell_price.toLocaleString()
-                            : "-"}
-                        </strong>
-                      </span>
-                    </div>
-                    <p style={{ marginTop: 6 }}>{r.reasons.join(" · ")}</p>
-                    <button
-                      className="btn secondary"
-                      style={{ marginTop: 8 }}
-                      onClick={() => openSymbolOnDesk(r.symbol, r.market)}
-                    >
-                      차트/분석 보기
-                    </button>
-                  </article>
-                ))}
+              {!showScanAll && recTopBriefs.length === 0 && recs.length > 0 && (
+                <div className="rec-brief-grid">
+                  {recs.map((r) => (
+                    <RecBriefCard
+                      key={r.symbol}
+                      row={r}
+                      pick={r}
+                      onOpenChart={() => openSymbolOnDesk(r.symbol, r.market)}
+                    />
+                  ))}
+                </div>
+              )}
               {showScanAll && (
                 <div className="scan-board">
                   {scanItems.length === 0 ? (
@@ -1368,8 +1556,8 @@ export default function App() {
                                 {row.change_pct}%
                               </td>
                               <td>{row.rsi}</td>
-                              <td>{row.macd_signal}</td>
-                              <td>{row.trend}</td>
+                              <td>{macdKo(row.macd_signal)}</td>
+                              <td>{trendKo(row.trend)}</td>
                               <td>
                                 <button
                                   className="btn secondary"
@@ -1390,162 +1578,39 @@ export default function App() {
           )}
 
           {workspace === "account" && (
-            <div className="list workspace-page">
-              <div className="main-head">
-                <div className="price-box">
-                  <h2>내 계좌</h2>
-                  <div className="meta muted">통합 잔고 · 국내/해외 보유</div>
-                </div>
-              </div>
-              {!account?.connected && (
-                <p className="muted">
-                  거래 연동이 되지 않았습니다. `.env`의 KIS 설정 또는 `secret.json`을 확인한 뒤
-                  API를 재시작해 주세요.
-                </p>
-              )}
-              {account?.error && <div className="error-box">{account.error}</div>}
-              {account?.connected && (
-                <>
-                  <article className="card-item">
-                    <h4>
-                      통합 계좌 {account.virtual ? "(모의투자)" : "(실전)"}
-                    </h4>
-                    <p>계좌번호 {account.account || "-"}</p>
-                    <div className="cash-strip">
-                      <div className="cash-item">
-                        <div className="label">보유 현금 (원화)</div>
-                        <div className="value">{formatMoney(account.domestic.deposit_krw)}</div>
-                      </div>
-                      <div className="cash-item">
-                        <div className="label">보유 현금 (달러)</div>
-                        <div className="value">
-                          {formatMoney(account.overseas.deposit_usd, "USD")}
-                        </div>
-                        {account.overseas.deposit_krw ? (
-                          <div className="muted" style={{ fontSize: "0.78rem", marginTop: 2 }}>
-                            약 {formatMoney(account.overseas.deposit_krw)}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="metrics" style={{ marginTop: 10, marginBottom: 0 }}>
-                      <div className="metric">
-                        <div className="label">총평가(원화)</div>
-                        <div className="value">{formatMoney(account.total_eval_krw)}</div>
-                      </div>
-                      <div className="metric">
-                        <div className="label">보유주식 평가</div>
-                        <div className="value">{formatMoney(account.current_amount)}</div>
-                      </div>
-                      <div className="metric">
-                        <div className="label">매입금액</div>
-                        <div className="value">{formatMoney(account.purchase_amount)}</div>
-                      </div>
-                      <div className="metric">
-                        <div className="label">평가손익</div>
-                        <div className={`value ${account.profit_loss >= 0 ? "up" : "down"}`}>
-                          {account.profit_loss >= 0 ? "+" : ""}
-                          {formatMoney(account.profit_loss)} ({account.profit_loss_rate.toFixed(2)}%)
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      className="btn secondary"
-                      style={{ marginTop: 10 }}
-                      onClick={loadAccount}
-                      disabled={accountLoading}
-                    >
-                      계좌 새로고침
-                    </button>
-                  </article>
-
-                  <article className="card-item">
-                    <h4>국내 계좌</h4>
-                    <p>
-                      예수금 {formatMoney(account.domestic.deposit_krw)} · 주식평가{" "}
-                      {formatMoney(account.domestic.stocks_value)}
-                    </p>
-                    {(account.domestic.holdings || []).length === 0 && (
-                      <p className="muted" style={{ marginTop: 8 }}>보유 종목이 없습니다.</p>
-                    )}
-                    {(account.domestic.holdings || []).map((h) => (
-                      <div key={`kr-${h.symbol}`} style={{ marginTop: 10 }}>
-                        <strong>
-                          {h.name || h.symbol} ({h.symbol})
-                        </strong>
-                        <p>
-                          {h.qty.toLocaleString()}주 · {formatMoney(h.price)} · 평가{" "}
-                          {formatMoney(h.amount)}
-                        </p>
-                        <p className={h.profit >= 0 ? "up" : "down"}>
-                          손익 {h.profit >= 0 ? "+" : ""}
-                          {formatMoney(h.profit)} ({h.profit_rate.toFixed(2)}%)
-                        </p>
-                        <button
-                          className="btn secondary"
-                          style={{ marginTop: 6 }}
-                          onClick={() => openHolding(h)}
-                        >
-                          차트 보기
-                        </button>
-                      </div>
-                    ))}
-                  </article>
-
-                  <article className="card-item">
-                    <h4>해외 계좌</h4>
-                    <p>
-                      예수금 {formatMoney(account.overseas.deposit_usd, "USD")}
-                      {account.overseas.deposit_krw
-                        ? ` (약 ${formatMoney(account.overseas.deposit_krw)})`
-                        : ""}
-                      {" · "}주식평가 {formatMoney(account.overseas.stocks_value, "USD")}
-                      {account.overseas.stocks_value_krw
-                        ? ` / ${formatMoney(account.overseas.stocks_value_krw)}`
-                        : ""}
-                    </p>
-                    {account.overseas.exchange_rate ? (
-                      <p className="muted" style={{ marginTop: 4 }}>
-                        적용환율 {account.overseas.exchange_rate.toLocaleString()}원/USD
-                      </p>
-                    ) : null}
-                    {(account.overseas.holdings || []).length === 0 && (
-                      <p className="muted" style={{ marginTop: 8 }}>보유 종목이 없습니다.</p>
-                    )}
-                    {(account.overseas.holdings || []).map((h) => (
-                      <div key={`us-${h.symbol}`} style={{ marginTop: 10 }}>
-                        <strong>
-                          {h.name || h.symbol} ({h.symbol}/{h.market || "US"})
-                        </strong>
-                        <p>
-                          {h.qty.toLocaleString()}주 · {formatMoney(h.price, "USD")} · 평가{" "}
-                          {formatMoney(h.amount, "USD")}
-                        </p>
-                        <p className={h.profit >= 0 ? "up" : "down"}>
-                          손익 {h.profit >= 0 ? "+" : ""}
-                          {formatMoney(h.profit, "USD")} ({h.profit_rate.toFixed(2)}%)
-                        </p>
-                        <button
-                          className="btn secondary"
-                          style={{ marginTop: 6 }}
-                          onClick={() => openHolding(h)}
-                        >
-                          차트 보기
-                        </button>
-                      </div>
-                    ))}
-                  </article>
-                </>
-              )}
-            </div>
+            <AccountWorkspace
+              account={account}
+              loading={accountLoading}
+              activeBroker={session.broker}
+              onBrokerChange={(broker) => {
+                const next = { ...session, broker };
+                localStorage.setItem(SESSION_KEY, JSON.stringify(next));
+                setSession(next);
+              }}
+              onRefresh={() => {
+                loadAccount();
+                api.health().then(setHealth).catch(() => {});
+              }}
+              onOpenHolding={openHolding}
+              formatMoney={formatMoney}
+            />
           )}
+          {workspace === "sec13f" && <Sec13FWorkspace />}
         </main>
 
-        {workspace === "desk" && (
+        {workspace === "desk" && newsOpen && (
         <aside className="panel side-stock-news">
-          <div className="section-title">종목 뉴스</div>
+          <FoldHead
+            title="종목 뉴스"
+            open={newsOpen}
+            onToggle={() => {
+              const next = !newsOpen;
+              setNewsOpen(next);
+              savePanelOpen(PANEL_NEWS, next);
+            }}
+          />
           <p className="muted side-news-hint">
-            선택 종목({stockName || symbol}) · 클릭 시 AI 브리핑
+            {stockName || symbol} · 클릭 시 브리핑
           </p>
           <div className="row" style={{ gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
             <button
@@ -1562,9 +1627,36 @@ export default function App() {
             >
               최신순
             </button>
+            <button
+              type="button"
+              className={`market-cat ${newsTone === "all" ? "active" : ""}`}
+              onClick={() => setNewsTone("all")}
+            >
+              전체
+            </button>
+            <button
+              type="button"
+              className={`market-cat ${newsTone === "bullish" ? "active" : ""}`}
+              onClick={() => setNewsTone("bullish")}
+            >
+              호재
+            </button>
+            <button
+              type="button"
+              className={`market-cat ${newsTone === "bearish" ? "active" : ""}`}
+              onClick={() => setNewsTone("bearish")}
+            >
+              악재
+            </button>
           </div>
           <div className="list">
             {[...news]
+              .filter((n) => {
+                if (newsTone === "all") return true;
+                const t = (n.sentiment || "").toLowerCase();
+                return t === newsTone || (newsTone === "bullish" && t === "positive")
+                  || (newsTone === "bearish" && t === "negative");
+              })
               .sort((a, b) => {
                 const ia = a.importance || 0;
                 const ib = b.importance || 0;
@@ -1579,9 +1671,10 @@ export default function App() {
                 className="card-item side-news-item"
                 key={`side-${n.url || i}`}
                 onClick={() => openStockNewsBriefing(n)}
-                title={n.importance_reason || "AI 브리핑 보기"}
+                title={n.sentiment_reason || n.importance_reason || "AI 브리핑 보기"}
               >
                 <div className="row" style={{ gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+                  <NewsToneChip tone={n.sentiment} />
                   {typeof n.importance === "number" && n.importance > 0 && (
                     <span className={`chip imp imp-${n.importance}`}>중요도 {n.importance}</span>
                   )}

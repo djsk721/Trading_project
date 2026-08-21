@@ -16,52 +16,75 @@ _rr_counter = 0
 
 
 class LLMRouter:
-    """chat은 프로바이더 전환, embed는 차원 일관성 위해 기본 Ollama 고정."""
+    """chat은 프로바이더 전환, embed는 차원 일관성 위해 기본 설정을 따름."""
 
     def __init__(self) -> None:
         self.settings = get_settings()
 
+    @property
+    def ollama_enabled(self) -> bool:
+        return bool(getattr(self.settings, "ollama_enabled", False))
+
     def status(self) -> Dict[str, bool | str]:
-        ollama = get_ollama()
         nvidia = get_nvidia()
-        ollama_ok = ollama.health()
         nvidia_ok = nvidia.health() if nvidia.configured else False
+        ollama_ok = False
+        if self.ollama_enabled:
+            ollama_ok = get_ollama().health()
+        provider = (self.settings.llm_provider or "nvidia").lower()
+        if not self.ollama_enabled and provider in {"auto", "ollama", "local", "gemma"}:
+            provider = "nvidia"
         return {
             "ollama_connected": ollama_ok,
+            "ollama_enabled": self.ollama_enabled,
             "nvidia_connected": nvidia_ok,
             "ai_connected": bool(ollama_ok or nvidia_ok),
-            "llm_provider": (self.settings.llm_provider or "auto").lower(),
-            "embed_provider": (self.settings.embed_provider or "ollama").lower(),
+            "llm_provider": provider,
+            "embed_provider": (self.settings.embed_provider or "nvidia").lower(),
         }
 
     def _normalize(self, provider: Optional[str]) -> str:
-        mode = (provider or self.settings.llm_provider or "auto").strip().lower()
+        mode = (provider or self.settings.llm_provider or "nvidia").strip().lower()
         if mode in {"local", "gemma", "ollama"}:
-            return "ollama"
-        if mode in {"nim", "nvidia_api", "nvidia"}:
+            mode = "ollama"
+        elif mode in {"nim", "nvidia_api", "nvidia"}:
+            mode = "nvidia"
+        else:
+            mode = "auto"
+        # 테스트용: Ollama 잠금 시 무조건 NVIDIA
+        if not self.ollama_enabled:
+            if mode == "ollama":
+                log.info("Ollama disabled; forcing NVIDIA provider")
             return "nvidia"
-        return "auto"
+        return mode
 
     def _chat_order(self, provider: Optional[str] = None) -> List[str]:
         global _rr_counter
         mode = self._normalize(provider)
         nvidia = get_nvidia()
         has_nvidia = nvidia.configured
+        allow_ollama = self.ollama_enabled
+
         if mode == "ollama":
-            order = ["ollama"]
+            order = ["ollama"] if allow_ollama else []
             if has_nvidia and self.settings.llm_failover:
                 order.append("nvidia")
-            return order
+            return order or (["nvidia"] if has_nvidia else [])
+
         if mode == "nvidia":
             order = ["nvidia"] if has_nvidia else []
-            if self.settings.llm_failover or not order:
+            if allow_ollama and (self.settings.llm_failover or not order):
                 order.append("ollama")
-            return order or ["ollama"]
+            return order
 
-        # auto: 가용 프로바이더를 라운드로빈으로 시작점 변경
-        pool = ["ollama"]
+        # auto
+        pool: List[str] = []
+        if allow_ollama:
+            pool.append("ollama")
         if has_nvidia:
             pool.append("nvidia")
+        if not pool:
+            return []
         if len(pool) == 1:
             return pool
         with _rr_lock:
@@ -82,7 +105,10 @@ class LLMRouter:
             (answer, provider_name)
         """
         errors: List[str] = []
-        for name in self._chat_order(provider):
+        order = self._chat_order(provider)
+        if not order:
+            raise RuntimeError("No LLM provider available (Ollama disabled, NVIDIA not configured)")
+        for name in order:
             try:
                 if name == "nvidia":
                     text = get_nvidia().chat(
@@ -91,6 +117,8 @@ class LLMRouter:
                         num_predict=num_predict,
                     )
                 else:
+                    if not self.ollama_enabled:
+                        continue
                     text = get_ollama().chat(
                         messages,
                         temperature=temperature,
@@ -106,17 +134,21 @@ class LLMRouter:
         raise RuntimeError("All LLM providers failed: " + " | ".join(errors))
 
     def embed(self, texts: List[str], *, input_type: str = "passage") -> List[List[float]]:
-        mode = (self.settings.embed_provider or "ollama").strip().lower()
+        mode = (self.settings.embed_provider or "nvidia").strip().lower()
         nvidia = get_nvidia()
         if mode == "nvidia" and nvidia.api_key and nvidia.embed_model:
             return nvidia.embed(texts, input_type=input_type)
+        if not self.ollama_enabled:
+            raise RuntimeError("Embedding provider unavailable (Ollama disabled)")
         return get_ollama().embed(texts)
 
     def embed_one(self, text: str, *, input_type: str = "query") -> List[float]:
-        mode = (self.settings.embed_provider or "ollama").strip().lower()
+        mode = (self.settings.embed_provider or "nvidia").strip().lower()
         nvidia = get_nvidia()
         if mode == "nvidia" and nvidia.api_key and nvidia.embed_model:
             return nvidia.embed_one(text, input_type=input_type)
+        if not self.ollama_enabled:
+            raise RuntimeError("Embedding provider unavailable (Ollama disabled)")
         return get_ollama().embed_one(text)
 
 

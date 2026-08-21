@@ -79,6 +79,7 @@ class PendingOrder(BaseModel):
     qty: float = 0
     price: float = 0
     pending_qty: int = 0
+    order_id: str = ""
 
 
 class CancelOrderRequest(BaseModel):

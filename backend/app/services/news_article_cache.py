@@ -116,11 +116,13 @@ def get_cached_article(url: str) -> Optional[dict]:
 
 
 def parse_enrichment_fields(raw: str) -> Dict[str, Any]:
-    """TITLE_KO / IMPORTANCE / LEAD·BODY·NOTE 파싱."""
+    """TITLE_KO / IMPORTANCE / SENTIMENT / LEAD·BODY·NOTE 파싱."""
     text = (raw or "").strip()
     title_ko = ""
     importance = 3
     importance_reason = ""
+    sentiment = ""
+    sentiment_reason = ""
 
     m_title = re.search(
         r"(?:^|\n)\s*TITLE_KO\s*[:：]\s*(.+?)(?=\n\s*[A-Z_]+\s*[:：]|\n\s*$|$)",
@@ -142,9 +144,25 @@ def parse_enrichment_fields(raw: str) -> Dict[str, Any]:
     if m_reason:
         importance_reason = m_reason.group(1).strip().split("\n")[0].strip()
 
+    m_sent = re.search(
+        r"(?:^|\n)\s*SENTIMENT\s*[:：]\s*(bullish|bearish|mixed|neutral)\b",
+        text,
+        flags=re.I,
+    )
+    if m_sent:
+        sentiment = m_sent.group(1).strip().lower()
+
+    m_sent_reason = re.search(
+        r"(?:^|\n)\s*SENTIMENT_REASON\s*[:：]\s*(.+?)(?=\n\s*[A-Z_]+\s*[:：]|\n\s*$|$)",
+        text,
+        flags=re.I | re.S,
+    )
+    if m_sent_reason:
+        sentiment_reason = m_sent_reason.group(1).strip().split("\n")[0].strip()
+
     # 요약 본문에서 메타 라벨 제거
     body = re.sub(
-        r"(?:^|\n)\s*(?:TITLE_KO|IMPORTANCE|IMPORTANCE_REASON)\s*[:：].*",
+        r"(?:^|\n)\s*(?:TITLE_KO|IMPORTANCE|IMPORTANCE_REASON|SENTIMENT|SENTIMENT_REASON)\s*[:：].*",
         "",
         text,
         flags=re.I,
@@ -154,6 +172,8 @@ def parse_enrichment_fields(raw: str) -> Dict[str, Any]:
         "title_ko": title_ko,
         "importance": importance,
         "importance_reason": importance_reason,
+        "sentiment": sentiment,
+        "sentiment_reason": sentiment_reason,
         "summary_ko": body or text,
     }
 
@@ -196,11 +216,15 @@ def enrich_item_from_cache(item: dict) -> dict:
             out["title"] = cached["title"]
         out["importance"] = int(cached.get("importance") or 0) or None
         out["importance_reason"] = cached.get("importance_reason") or ""
+        out["sentiment"] = cached.get("sentiment") or ""
+        out["sentiment_reason"] = cached.get("sentiment_reason") or ""
         out["has_ai_summary"] = bool(cached.get("summary_ko"))
         out["summary_cached"] = True
     else:
         out.setdefault("importance", None)
         out.setdefault("importance_reason", "")
+        out.setdefault("sentiment", "")
+        out.setdefault("sentiment_reason", "")
         out.setdefault("has_ai_summary", False)
         out["summary_cached"] = False
     return out
@@ -234,6 +258,8 @@ def summarize_article(
             "summary_ko": "요약할 기사 URL이 없습니다.",
             "importance": 0,
             "importance_reason": "",
+            "sentiment": "",
+            "sentiment_reason": "",
             "cached": False,
             "provider": "none",
         }
@@ -268,6 +294,8 @@ def summarize_article(
             "summary_ko": "요약 생성 대기 중 시간이 초과되었습니다. 다시 시도해 주세요.",
             "importance": 0,
             "importance_reason": "",
+            "sentiment": "",
+            "sentiment_reason": "",
             "cached": False,
             "provider": "none",
         }
@@ -286,11 +314,11 @@ def summarize_article(
                 "role": "system",
                 "content": (
                     "당신은 트레이딩 데스크 뉴스 에디터입니다. "
-                    "기사를 한국어 브리핑으로 정리하고, 시장 관점 중요도를 판별합니다. "
+                    "기사를 한국어 브리핑으로 정리하고, 시장 관점 중요도와 호재/악재 톤을 판별합니다. "
                     "지수·환율·유가·금리 수치는 LIVE_MACROS 또는 기사에 있는 것만 사용하세요. "
                     "학습 지식의 과거 수치를 지어내지 마세요. "
                     "번호 목록·이모지·'AI'·'요약하면' 메타 표현은 금지입니다. "
-                    "투자 권유는 하지 마세요."
+                    "투자 권유는 하지 마세요. 호재/악재는 참고 태그일 뿐 매수·매도 신호가 아닙니다."
                 ),
             },
             {
@@ -314,6 +342,12 @@ def summarize_article(
                     "  2=국지적·후속 보도\n"
                     "  1=잡음·광고성·관련성 낮음\n"
                     "IMPORTANCE_REASON: (한 줄)\n"
+                    "SENTIMENT: (bullish|bearish|mixed|neutral 중 하나)\n"
+                    "  bullish=해당 종목·시장에 대체로 호재\n"
+                    "  bearish=해당 종목·시장에 대체로 악재\n"
+                    "  mixed=호재와 악재가 섞임\n"
+                    "  neutral=방향성이 약함\n"
+                    "SENTIMENT_REASON: (한 줄, 매수/매도 단정 금지)\n"
                     "LEAD: (한 문장)\n"
                     "BODY: (2~4문장)\n"
                     "NOTE: (1~2문장, 매수/매도 단정 금지)\n"
@@ -355,6 +389,8 @@ def summarize_article(
         "summary_ko": parsed["summary_ko"],
         "importance": int(parsed["importance"] or 3),
         "importance_reason": parsed["importance_reason"],
+        "sentiment": parsed.get("sentiment") or "",
+        "sentiment_reason": parsed.get("sentiment_reason") or "",
         "provider": used_provider,
         "updated_at": _now_iso(),
         "cached": False,
