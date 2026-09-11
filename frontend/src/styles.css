@@ -208,6 +208,10 @@ textarea {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.app.app-workspace-calendar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .workspace-page {
   max-height: none;
 }
@@ -1210,6 +1214,81 @@ textarea {
   line-height: 1.6;
   font-size: 0.92rem;
   color: var(--text);
+}
+
+.md-body.answer {
+  white-space: normal;
+}
+
+.md-body h3,
+.md-body h4,
+.md-body h5 {
+  margin: 1.05em 0 0.4em;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.md-body h3 {
+  font-size: 1.02rem;
+}
+
+.md-body h4 {
+  font-size: 0.95rem;
+}
+
+.md-body h5 {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.md-body p {
+  margin: 0 0 0.7em;
+  line-height: 1.65;
+}
+
+.md-body ul,
+.md-body ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.2em;
+}
+
+.md-body li {
+  margin: 0.2em 0;
+  line-height: 1.55;
+}
+
+.md-body strong {
+  font-weight: 700;
+}
+
+.md-body em {
+  font-style: italic;
+}
+
+.md-body code {
+  font-size: 0.85em;
+  padding: 0.08em 0.35em;
+  border-radius: 4px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+}
+
+.md-body blockquote {
+  margin: 0 0 0.75em;
+  padding: 0.35em 0.75em;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+.md-body hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 0.9em 0;
+}
+
+.md-body a {
+  color: var(--accent, #2563eb);
 }
 
 .up {
@@ -2664,6 +2743,112 @@ textarea {
   margin-top: 6px;
 }
 
+.login-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.login-chip {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.login-chip.ok {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.login-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.login-broker-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.tab-btn {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.tab-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.secret-wrap {
+  position: relative;
+  display: flex;
+}
+
+.secret-wrap input {
+  padding-right: 64px;
+}
+
+.secret-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.72rem;
+  padding: 4px 8px;
+}
+
+.login-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.login-switch-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.login-warn {
+  margin: -4px 0 12px;
+  color: #e5484d;
+  font-size: 0.8rem;
+}
+
+.login-ai {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.login-ai summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.login-form .btn.secondary,
+.login-form .btn.ghost {
+  margin-top: 8px;
+}
+
 .app.app-workspace-account {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -2842,6 +3027,468 @@ textarea {
   }
   .analysis-metrics,
   .analysis-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.holdings-exit-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background:
+    radial-gradient(520px 180px at 10% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%),
+    var(--bg1);
+}
+
+.exit-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.exit-pill,
+.exit-decision-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.exit-pill {
+  min-height: 24px;
+  padding: 3px 9px;
+  font-size: 0.74rem;
+}
+
+.exit-decision-badge {
+  padding: 5px 10px;
+  font-size: 0.75rem;
+}
+
+.exit-pill.sell,
+.exit-decision-badge.sell,
+.exit-card.sell {
+  border-color: color-mix(in srgb, var(--danger) 44%, var(--line));
+}
+
+.exit-pill.sell,
+.exit-decision-badge.sell {
+  background: color-mix(in srgb, var(--danger) 13%, var(--bg1));
+  color: var(--danger);
+}
+
+.exit-pill.trim,
+.exit-decision-badge.trim {
+  background: color-mix(in srgb, var(--accent-2) 16%, var(--bg1));
+  color: var(--accent-2);
+}
+
+.exit-card.trim {
+  border-color: color-mix(in srgb, var(--accent-2) 42%, var(--line));
+}
+
+.exit-pill.hold,
+.exit-decision-badge.hold {
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg1));
+  color: var(--accent);
+}
+
+.exit-card.hold {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+
+.exit-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.exit-card {
+  border-width: 1px;
+}
+
+.exit-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.exit-metrics span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.exit-metrics strong {
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+.exit-ai-panel {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: 10px;
+  background:
+    radial-gradient(260px 110px at 0% 0%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 68%),
+    var(--bg2);
+}
+
+.exit-ai-panel div:not(.exit-watchpoints) {
+  display: grid;
+  gap: 2px;
+}
+
+.exit-ai-panel span {
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.exit-ai-panel p {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.exit-watchpoints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.exit-watchpoints em {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: var(--bg1);
+  color: var(--muted);
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.rec-progress {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 86%, var(--accent) 6%);
+}
+
+.rec-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.rec-progress-track {
+  height: 8px;
+  margin: 9px 0 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.rec-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 240ms ease;
+}
+
+.broker-diagnostics {
+  margin-top: 16px;
+}
+
+.broker-check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.broker-check {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+
+.broker-check strong,
+.broker-check span {
+  display: block;
+}
+
+.broker-check span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.broker-check.ok {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+}
+
+.broker-check.warn {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
+}
+
+.broker-cap-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mini-cap {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.mini-cap.ok {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.mini-cap.off {
+  opacity: 0.62;
+}
+
+.dividend-page {
+  gap: 16px;
+  width: 100%;
+  min-height: calc(100vh - 190px);
+}
+
+.dividend-filter {
+  display: grid;
+  grid-template-columns: 180px 180px 180px minmax(280px, 1fr) 120px;
+  gap: 12px;
+  align-items: end;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent) 4%);
+}
+
+.dividend-filter label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.dividend-filter input,
+.dividend-filter select {
+  width: 100%;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.dividend-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dividend-overview div {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent),
+    var(--panel);
+}
+
+.dividend-overview span,
+.dividend-overview strong {
+  display: block;
+}
+
+.dividend-overview span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.dividend-overview strong {
+  margin-top: 5px;
+  font-size: 1.8rem;
+  letter-spacing: -0.04em;
+}
+
+.dividend-month-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+}
+
+.dividend-month-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent-2) 16%, transparent), transparent 34%),
+    var(--panel);
+}
+
+.dividend-month-card h3 {
+  margin: 0 0 12px;
+}
+
+.dividend-event-list {
+  display: grid;
+  gap: 10px;
+}
+
+.dividend-event {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--panel) 86%, white 4%);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.dividend-event:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.dividend-event strong,
+.dividend-event em,
+.dividend-event span:not(.dividend-dday) {
+  grid-column: 2;
+}
+
+.dividend-event em,
+.dividend-event span:not(.dividend-dday) {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.dividend-dday {
+  grid-row: 1 / span 3;
+  align-self: center;
+  min-width: 64px;
+  padding: 9px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.dividend-dday.soon {
+  color: #7c2d12;
+  background: #fed7aa;
+}
+
+.dividend-empty {
+  border-style: dashed;
+}
+
+.compact-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 86px;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 18px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+.compact-empty h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.dividend-recent-section {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--panel) 94%, var(--accent-2) 4%);
+}
+
+.dividend-recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.dividend-recent-card {
+  display: grid;
+  gap: 4px;
+  padding: 13px 14px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.dividend-recent-card:hover {
+  border-color: var(--accent);
+}
+
+.dividend-recent-card span,
+.dividend-recent-card em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.dividend-recent-card b {
+  margin-top: 3px;
+}
+
+@media (max-width: 900px) {
+  .dividend-filter {
+    grid-template-columns: 1fr;
+  }
+
+  .dividend-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .dividend-month-grid {
     grid-template-columns: 1fr;
   }
 }

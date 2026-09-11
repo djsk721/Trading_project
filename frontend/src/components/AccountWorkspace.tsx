@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { AccountOverview, HoldingItem, api } from "../api";
+import { AccountOverview, BrokerCapabilities, HoldingExitItem, HoldingExitResponse, HoldingItem, api } from "../api";
+import { brokerKeysPayload, clearBrokerCreds, persistBrokerCreds } from "../brokerSession";
 
 type BrokerStatus = {
   active_broker?: "kis" | "toss" | string;
@@ -60,6 +61,10 @@ export default function AccountWorkspace({
   const [active, setActive] = useState<"kis" | "toss">(activeBroker || "kis");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  const [exitCheck, setExitCheck] = useState<HoldingExitResponse | null>(null);
+  const [exitLoading, setExitLoading] = useState(false);
+  const [exitMsg, setExitMsg] = useState("");
+  const [diagnostics, setDiagnostics] = useState<BrokerCapabilities | null>(null);
 
   useEffect(() => {
     const local = loadLocalKeys();
@@ -87,6 +92,7 @@ export default function AccountWorkspace({
         }
       })
       .catch(() => setStatus(null));
+    api.brokerDiagnostics().then(setDiagnostics).catch(() => setDiagnostics(null));
   }, []);
 
   useEffect(() => {
@@ -107,7 +113,7 @@ export default function AccountWorkspace({
           toss: { account: toss.account },
         })
       );
-      const r = await api.saveBrokerKeys({
+      const payload = {
         active,
         kis: {
           hts_id: kis.hts_id,
@@ -121,7 +127,9 @@ export default function AccountWorkspace({
           client_secret: toss.client_secret,
           account: toss.account,
         },
-      });
+      };
+      persistBrokerCreds(payload);
+      const r = await api.saveBrokerKeys(payload);
       setStatus(r as BrokerStatus);
       if ((r as BrokerStatus).active_broker === "toss" || (r as BrokerStatus).active_broker === "kis") {
         setActive((r as BrokerStatus).active_broker as "kis" | "toss");
@@ -131,6 +139,7 @@ export default function AccountWorkspace({
       setMsg("연동 정보를 저장했습니다. 선택한 증권사로 시세·주문이 연결됩니다.");
       onBrokerChange?.(active);
       onRefresh();
+      api.brokerDiagnostics().then(setDiagnostics).catch(() => setDiagnostics(null));
     } catch (err: unknown) {
       setMsg(err instanceof Error ? err.message : "저장에 실패했습니다.");
     } finally {
@@ -145,9 +154,11 @@ export default function AccountWorkspace({
         kis: { clear: true },
         toss: { clear: true },
       });
+      clearBrokerCreds();
       setStatus(r as BrokerStatus);
       setMsg("개인 키를 지웠습니다. 서버 기본 연동(.env)을 사용합니다.");
       onRefresh();
+      api.brokerDiagnostics().then(setDiagnostics).catch(() => setDiagnostics(null));
     } catch (err: unknown) {
       setMsg(err instanceof Error ? err.message : "삭제에 실패했습니다.");
     } finally {
@@ -159,15 +170,29 @@ export default function AccountWorkspace({
     setActive(next);
     setSaving(true);
     try {
-      const r = await api.saveBrokerKeys({ active: next });
+      const r = await api.saveBrokerKeys(brokerKeysPayload(next));
       setStatus(r as BrokerStatus);
       setMsg(next === "toss" ? "토스증권으로 시세·주문을 전환했습니다." : "한국투자증권으로 시세·주문을 전환했습니다.");
       onBrokerChange?.(next);
       onRefresh();
+      api.brokerDiagnostics().then(setDiagnostics).catch(() => setDiagnostics(null));
     } catch (err: unknown) {
       setMsg(err instanceof Error ? err.message : "증권사 전환에 실패했습니다.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function loadExitCheck(force = false) {
+    setExitLoading(true);
+    setExitMsg("");
+    try {
+      const r = await api.holdingsExit({ force, days: 160 });
+      setExitCheck(r);
+    } catch (err: unknown) {
+      setExitMsg(err instanceof Error ? err.message : "보유 매도 점검에 실패했습니다.");
+    } finally {
+      setExitLoading(false);
     }
   }
 
@@ -201,12 +226,16 @@ export default function AccountWorkspace({
         </button>
       </div>
 
-      {!account?.connected && (
+      {!account?.connected && !loading && (
         <p className="muted">
-          아직 거래 연동이 없습니다. 사용할 증권사를 고른 뒤 API 키를 저장하거나, 서버 `.env`를 확인해 주세요.
+          아직 거래 연동이 없습니다. 로그인에서 넣은 키로 연결되며, 계좌번호는 12345678-01 형식입니다.
+          HTS ID(@로 시작)를 계좌 칸에 넣지 마세요.
         </p>
       )}
-      {account?.error && <div className="error-box">{account.error}</div>}
+      {loading && (
+        <p className="muted">로그인 키로 잔고를 조회하고 있습니다...</p>
+      )}
+      {account?.error && !loading && <div className="error-box">{account.error}</div>}
 
       {account?.connected && (
         <>
@@ -231,6 +260,62 @@ export default function AccountWorkspace({
               </div>
             </div>
           </div>
+
+          <section className="holdings-exit-panel">
+            <div className="holdings-head">
+              <div>
+                <h3>보유 매도 점검</h3>
+                <p className="muted">
+                  손익, 비중, RSI, MACD, 추세, 이동평균, Bollinger Band로 sell / trim / hold를 점검합니다.
+                </p>
+              </div>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <button className="btn secondary" onClick={() => loadExitCheck(false)} disabled={exitLoading}>
+                  {exitLoading ? "점검 중..." : "점검 보기"}
+                </button>
+                <button className="btn ghost" onClick={() => loadExitCheck(true)} disabled={exitLoading}>
+                  점검 재생성
+                </button>
+              </div>
+            </div>
+            {exitMsg ? <div className="error-box">{exitMsg}</div> : null}
+            {exitCheck ? (
+              <>
+                <div className="exit-summary-row">
+                  <span className="exit-pill sell">매도 {exitCheck.summary.sell || 0}</span>
+                  <span className="exit-pill trim">축소 {exitCheck.summary.trim || 0}</span>
+                  <span className="exit-pill hold">보유 {exitCheck.summary.hold || 0}</span>
+                  <span className="muted">
+                    {exitCheck.cached ? "캐시" : "갱신"} · {exitCheck.as_of} · AI {exitCheck.used_llm ? "사용" : "미사용"}
+                  </span>
+                </div>
+                <div className="exit-card-grid">
+                  {exitCheck.items.map((item) => (
+                    <HoldingExitCard
+                      key={`${item.market}-${item.symbol}`}
+                      item={item}
+                      formatMoney={formatMoney}
+                      onOpen={() => onOpenHolding({
+                        symbol: item.symbol,
+                        name: item.name,
+                        market: item.market,
+                        qty: item.qty,
+                        price: item.price,
+                        amount: item.amount,
+                        profit: item.profit,
+                        profit_rate: item.profit_rate,
+                        currency: item.currency,
+                        scope: item.currency === "USD" ? "overseas" : "domestic",
+                      })}
+                    />
+                  ))}
+                </div>
+                <p className="muted">{exitCheck.disclaimer}</p>
+              </>
+            ) : (
+              <p className="muted">점검 보기를 누르면 당일 캐시를 표시하고, 점검 재생성은 계좌 캐시를 재사용해 분석만 다시 만듭니다.</p>
+            )}
+          </section>
 
           <HoldingsTable
             title="국내 보유"
@@ -327,7 +412,7 @@ export default function AccountWorkspace({
               <input
                 value={kis.account}
                 onChange={(e) => setKis({ ...kis, account: e.target.value })}
-                placeholder={status?.kis_account_masked || ""}
+                placeholder="예: 12345678-01"
                 autoComplete="off"
               />
             </div>
@@ -383,6 +468,52 @@ export default function AccountWorkspace({
           </div>
         </form>
         {msg && <p className="muted" style={{ marginTop: 10 }}>{msg}</p>}
+      </section>
+
+      <section className="account-settings broker-diagnostics">
+        <div className="holdings-head">
+          <h3>브로커 진단</h3>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => api.brokerDiagnostics().then(setDiagnostics).catch(() => setDiagnostics(null))}
+          >
+            진단 새로고침
+          </button>
+        </div>
+        {diagnostics ? (
+          <>
+            <div className="exit-summary-row">
+              <span className={`exit-pill ${diagnostics.connected ? "hold" : "sell"}`}>
+                API {diagnostics.connected ? "연결" : "미연결"}
+              </span>
+              <span className={`exit-pill ${diagnostics.trading_enabled ? "hold" : "trim"}`}>
+                주문 {diagnostics.trading_enabled ? "활성" : "차단"}
+              </span>
+              <span className={`exit-pill ${diagnostics.rate_limited ? "sell" : "hold"}`}>
+                Rate limit {diagnostics.rate_limited ? "cooldown" : "정상"}
+              </span>
+            </div>
+            {diagnostics.disabled_reason ? <p className="muted">{diagnostics.disabled_reason}</p> : null}
+            <div className="broker-check-grid">
+              {(diagnostics.checks || []).map((c) => (
+                <div key={c.name} className={`broker-check ${c.ok ? "ok" : "warn"}`}>
+                  <strong>{c.name}</strong>
+                  <span>{c.detail}</span>
+                </div>
+              ))}
+            </div>
+            <div className="broker-cap-list">
+              {Object.entries(diagnostics.supports || {}).map(([key, ok]) => (
+                <span key={key} className={`mini-cap ${ok ? "ok" : "off"}`}>
+                  {key.split("_").join(" ")} {ok ? "ON" : "OFF"}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="muted">진단 정보를 불러오지 못했습니다.</p>
+        )}
       </section>
     </div>
   );
@@ -450,5 +581,109 @@ function HoldingsTable({
         </div>
       )}
     </section>
+  );
+}
+
+function decisionClass(decision: string) {
+  if (decision === "sell") return "sell";
+  if (decision === "trim") return "trim";
+  return "hold";
+}
+
+function trendLabel(trend: string) {
+  const t = String(trend || "").toUpperCase();
+  if (t === "UP") return "상승";
+  if (t === "DOWN") return "하락";
+  return "중립";
+}
+
+function HoldingExitCard({
+  item,
+  formatMoney,
+  onOpen,
+}: {
+  item: HoldingExitItem;
+  formatMoney: (value: number, currency?: "KRW" | "USD") => string;
+  onOpen: () => void;
+}) {
+  const currency = String(item.currency || (item.market === "US" ? "USD" : "KRW")).toUpperCase() === "USD" ? "USD" : "KRW";
+  const showKrw = currency !== "KRW" && Number(item.amount_krw || 0) > 0;
+  const cls = decisionClass(item.decision);
+  return (
+    <article className={`rec-brief-card exit-card ${cls}`}>
+      <div className="rec-brief-top">
+        <div className="rec-brief-title-row">
+          <div className="rec-brief-rank">#{item.rank}</div>
+          <div className="rec-brief-names">
+            <strong className="rec-brief-name">{item.name || item.symbol}</strong>
+            <span className="rec-brief-sector">{item.symbol}</span>
+          </div>
+        </div>
+        <span className={`exit-decision-badge ${cls}`}>{item.decision_label}</span>
+      </div>
+
+      <div className="rec-brief-kpi">
+        <span className={`rec-kpi ${item.profit >= 0 ? "up" : "down"}`}>
+          {item.profit_rate >= 0 ? "+" : ""}
+          {item.profit_rate.toFixed(2)}%
+        </span>
+        <span className="rec-kpi muted-kpi">리스크 {item.risk_score.toFixed(0)}</span>
+        <span className="rec-kpi muted-kpi">비중 {(item.portfolio_weight * 100).toFixed(1)}%</span>
+      </div>
+
+      <div className="exit-metrics">
+        <span>평균 <strong>{formatMoney(item.avg_cost, currency)}</strong></span>
+        <span>현재 <strong>{formatMoney(item.price, currency)}</strong></span>
+        <span>평가 <strong>{formatMoney(item.amount, currency)}</strong></span>
+        {showKrw ? <span>원화환산 <strong>{formatMoney(item.amount_krw || 0, "KRW")}</strong></span> : null}
+        <span>RSI <strong>{item.rsi.toFixed(1)}</strong></span>
+        <span>MACD <strong>{item.macd_signal}</strong></span>
+        <span>추세 <strong>{trendLabel(item.trend)}</strong></span>
+        {currency !== "KRW" ? <span>환율 <strong>{Number(item.exchange_rate || 0).toLocaleString()}원</strong></span> : null}
+      </div>
+
+      <ul className="rec-highlights">
+        {(item.highlights.length ? item.highlights : item.reasons.slice(0, 2)).map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+
+      {item.ai_summary ? <p className="rec-metric-note">{item.ai_summary}</p> : null}
+
+      <div className="exit-ai-panel">
+        <div>
+          <span>AI 근거</span>
+          <p>{item.ai_rationale || item.ai_summary || "룰 기반 근거를 사용했습니다."}</p>
+        </div>
+        <div>
+          <span>리스크 해석</span>
+          <p>{item.ai_risk || "손익, 추세, 모멘텀 변화를 함께 확인해야 합니다."}</p>
+        </div>
+        <div>
+          <span>대응 시나리오</span>
+          <p>{item.ai_action || "다음 점검 시 가격·추세·손익률 변화를 재확인하세요."}</p>
+        </div>
+        <div className="exit-watchpoints">
+          {(item.ai_watchpoints || []).slice(0, 3).map((point) => (
+            <em key={point}>{point}</em>
+          ))}
+        </div>
+      </div>
+
+      <div className="rec-detail-block">
+        <details>
+          <summary className="rec-detail-toggle">룰 근거 보기</summary>
+          <ul className="rec-highlights">
+            {item.reasons.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        </details>
+      </div>
+
+      <div className="rec-brief-actions">
+        <button type="button" className="btn secondary" onClick={onOpen}>
+          차트/분석 →
+        </button>
+      </div>
+    </article>
   );
 }

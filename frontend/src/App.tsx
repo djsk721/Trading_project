@@ -14,8 +14,11 @@ import {
 } from "./api";
 import AccountWorkspace from "./components/AccountWorkspace";
 import CandleChart, { ChartTimeframe } from "./components/CandleChart";
+import DividendCalendarWorkspace from "./components/DividendCalendarWorkspace";
+import { brokerKeysPayload, clearBrokerCreds } from "./brokerSession";
 import LoginScreen, { BrokerId } from "./components/LoginScreen";
 import MacroBoard from "./components/MacroBoard";
+import MarkdownBody from "./components/MarkdownBody";
 import MarketPulsePanel from "./components/MarketPulsePanel";
 import NewsBriefingModal from "./components/NewsBriefingModal";
 import NewsToneChip from "./components/NewsToneChip";
@@ -25,7 +28,7 @@ import Sec13FWorkspace from "./components/Sec13FWorkspace";
 import { formatNewsTime } from "./formatTime";
 import { llmEngineKo, macdKo, trendKo } from "./labels";
 
-type Workspace = "desk" | "recommend" | "account" | "sec13f";
+type Workspace = "desk" | "recommend" | "account" | "calendar" | "sec13f";
 type RecMarket = "KRX" | "US" | "ALL";
 type Tab = "ai" | "trade";
 type Theme = "light" | "dark";
@@ -241,12 +244,12 @@ function FoldHead({
   );
 }
 
-function loadSession(): { user: string; broker: BrokerId } | null {
+function loadSession(): { broker: BrokerId } | null {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed?.user === "test") return parsed;
+    if (parsed?.broker === "kis" || parsed?.broker === "toss") return parsed;
   } catch {
     /* ignore */
   }
@@ -301,8 +304,13 @@ export default function App() {
     const store = loadRecStore();
     return !!store.byMarket[store.selected]?.cached;
   });
+  const [recProgress, setRecProgress] = useState({
+    stage_label: "대기",
+    progress: 0,
+    message: "추천 대기 중",
+  });
   const [analysisType, setAnalysisType] = useState("basic");
-  const [llmProvider, setLlmProvider] = useState("nvidia");
+  const [llmProvider, setLlmProvider] = useState("ollama");
   const [query, setQuery] = useState("지금 매수 타이밍인가요?");
   const [answer, setAnswer] = useState("");
   const [answerProvider, setAnswerProvider] = useState("");
@@ -451,10 +459,14 @@ export default function App() {
     refreshCore(tf);
   }
 
-  async function loadAccount() {
+  async function loadAccount(force = false) {
     setAccountLoading(true);
+    setAccount((prev) => (prev ? { ...prev, error: "" } : prev));
     try {
-      const a = await api.account();
+      if (session?.broker) {
+        await api.saveBrokerKeys(brokerKeysPayload(session.broker)).catch(() => undefined);
+      }
+      const a = await api.account(force);
       setAccount(a);
     } catch (e: unknown) {
       const msg =
@@ -486,31 +498,49 @@ export default function App() {
     }
   }
 
-  // 로그인 증권사 선택 → 백엔드 활성 브로커 동기화 후 연결 상태·계좌 조회
+  // 로그인 후 키만 올리고, 무거운 계좌 조회는 계좌 탭에서 수행
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (session?.broker) {
         try {
-          await api.saveBrokerKeys({ active: session.broker });
+          await api.saveBrokerKeys(brokerKeysPayload(session.broker));
         } catch {
           /* ignore */
         }
       }
       try {
         const h = await api.health();
-        if (!cancelled) setHealth(h);
+        if (!cancelled) {
+          setHealth(h);
+          if (h.llm_provider) setLlmProvider(h.llm_provider);
+        }
       } catch {
         if (!cancelled) setHealth(null);
       }
-      if (cancelled) return;
-      await loadAccount();
     })();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.broker]);
+
+  useEffect(() => {
+    if (workspace === "account") {
+      void loadAccount(false);
+      return;
+    }
+    if (workspace === "recommend") {
+      const store = loadRecStore();
+      const snap = store.byMarket[recMarket];
+      if (snap && (snap.items.length || snap.scanItems.length)) {
+        applyRecSnapshot(snap);
+      } else if (!recs.length && !scanItems.length) {
+        void loadRecommend({ market: recMarket, force: false, stay: true });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace]);
 
   useEffect(() => {
     api.popular(market).then((r) => setPopular(r.items || [])).catch(() => setPopular([]));
@@ -536,16 +566,6 @@ export default function App() {
 
   function goWorkspace(next: Workspace) {
     setWorkspace(next);
-    if (next === "account") loadAccount();
-    if (next === "recommend") {
-      const store = loadRecStore();
-      const snap = store.byMarket[recMarket];
-      if (snap && (snap.items.length || snap.scanItems.length)) {
-        applyRecSnapshot(snap);
-      } else {
-        void loadRecommend({ market: recMarket, force: false, stay: true });
-      }
-    }
   }
 
   function formatMoney(value: number, currency: "KRW" | "USD" = "KRW") {
@@ -572,12 +592,13 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (workspace !== "desk") return;
     const t = window.setTimeout(() => {
       refreshCore(chartTf);
     }, 120);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, market]);
+  }, [symbol, market, workspace]);
 
   useEffect(() => {
     setLimitPrice("");
@@ -674,6 +695,7 @@ export default function App() {
         provider: llmProvider === "auto" ? "" : llmProvider,
         force,
       });
+      api.recommendProgress().then(setRecProgress).catch(() => undefined);
       if (recMarketRef.current !== mkt) return;
       const items = r.items || [];
       const scans = r.scan_items || [];
@@ -707,12 +729,12 @@ export default function App() {
   }
 
   useEffect(() => {
-    const store = loadRecStore();
-    const snap = store.byMarket[store.selected];
-    if (snap && (snap.items.length || snap.scanItems.length)) return;
-    void loadRecommend({ market: store.selected, force: false, stay: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!loading) return;
+    const id = window.setInterval(() => {
+      api.recommendProgress().then(setRecProgress).catch(() => undefined);
+    }, 1200);
+    return () => window.clearInterval(id);
+  }, [loading]);
 
   async function runAnalysis() {
     setLoading(true);
@@ -770,6 +792,23 @@ export default function App() {
         const p = typeof limitPrice === "number" ? limitPrice : Number(limitPrice);
         payload.price = market === "KRX" ? Math.round(p) : p;
       }
+      const orderPrice = orderType === "limit" && typeof payload.price === "number" ? payload.price : price;
+      const estimated = Number(orderPrice || 0) * Number(qty || 0);
+      const ok = window.confirm(
+        [
+          "주문 전 최종 확인",
+          `종목: ${stockName || symbol} (${symbol})`,
+          `구분: ${side === "buy" ? "매수" : "매도"} / ${orderType === "limit" ? "지정가" : "시장가"}`,
+          `수량: ${qty}`,
+          `가격: ${orderType === "limit" ? formatQuotePrice(Number(payload.price || 0)) : "시장가"}`,
+          `예상금액: ${formatMoney(estimated, market === "KRX" ? "KRW" : "USD")}`,
+          "테스트 환경 또는 TRADING_ENABLED=false에서는 실제 주문이 차단됩니다.",
+        ].join("\\n")
+      );
+      if (!ok) {
+        setOrderMsg("주문 요청을 취소했습니다.");
+        return;
+      }
       const r: any = await api.order(payload);
       setOrderMsg(r.message || (r.success ? "주문이 접수되었습니다." : "주문 실패"));
     } catch (e: any) {
@@ -815,6 +854,7 @@ export default function App() {
                 ["desk", "데스크"],
                 ["recommend", "추천"],
                 ["account", "계좌"],
+                ["calendar", "배당"],
                 ["sec13f", "13F"],
               ] as [Workspace, string][]
             ).map(([id, label]) => (
@@ -867,7 +907,7 @@ export default function App() {
           <button
             className="btn secondary"
             onClick={() => setMarketPulseOpen(true)}
-            title="한국·미국·세계 시황 뉴스"
+            title="한국·미국·세계·암호화폐 시황 뉴스"
           >
             시황
           </button>
@@ -927,6 +967,7 @@ export default function App() {
             className="btn ghost"
             onClick={() => {
               localStorage.removeItem(SESSION_KEY);
+              clearBrokerCreds();
               setSession(null);
             }}
           >
@@ -943,8 +984,8 @@ export default function App() {
             className="btn icon-btn"
             onClick={() => {
               if (workspace === "account") {
-                loadAccount();
-              } else {
+                loadAccount(true);
+              } else if (workspace === "desk") {
                 refreshCore();
               }
             }}
@@ -959,7 +1000,7 @@ export default function App() {
         </div>
       </header>
 
-      <MacroBoard />
+      <MacroBoard active={workspace === "desk"} />
 
       <div
         className={`app app-workspace-${workspace}${
@@ -1053,12 +1094,11 @@ export default function App() {
                 <>
               <div className="field">
                 <label>AI 엔진</label>
-                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} disabled>
+                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)}>
+                  <option value="ollama">로컬 AI</option>
                   <option value="nvidia">클라우드 AI</option>
+                  <option value="auto">자동</option>
                 </select>
-                <p className="muted" style={{ marginTop: 4, fontSize: "0.75rem" }}>
-                  테스트 모드: 로컬 AI(Ollama) 비활성
-                </p>
               </div>
               <div className="field">
                 <label>분석 유형</label>
@@ -1120,12 +1160,11 @@ export default function App() {
               <div className="section-title">추천 설정</div>
               <div className="field">
                 <label>AI 엔진</label>
-                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} disabled>
+                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)}>
+                  <option value="ollama">로컬 AI</option>
                   <option value="nvidia">클라우드 AI</option>
+                  <option value="auto">자동</option>
                 </select>
-                <p className="muted" style={{ marginTop: 4, fontSize: "0.75rem" }}>
-                  테스트 모드: 로컬 AI(Ollama) 비활성
-                </p>
               </div>
               <button
                 className="btn btn-block"
@@ -1149,6 +1188,16 @@ export default function App() {
                   당일 추천은 업데이트하기 전까지 유지됩니다.
                 </p>
               )}
+              <div className="rec-progress">
+                <div className="rec-progress-head">
+                  <span>{recProgress.stage_label}</span>
+                  <strong>{recProgress.progress}%</strong>
+                </div>
+                <div className="rec-progress-track">
+                  <span style={{ width: `${recProgress.progress}%` }} />
+                </div>
+                <p className="muted">{recProgress.message}</p>
+              </div>
               {error && <div className="error-box">{error}</div>}
             </>
           )}
@@ -1338,10 +1387,11 @@ export default function App() {
                         {" · "}룰 체크리스트를 반영해 평가합니다
                       </p>
                     )}
-                    <p className="answer">
-                      {answer ||
-                        "위에서 지표 룰 분석을 확인한 뒤, 왼쪽에서 질문을 입력하고 AI 분석을 실행하세요."}
-                    </p>
+                    <MarkdownBody
+                      className="answer"
+                      text={answer}
+                      placeholder="위에서 지표 룰 분석을 확인한 뒤, 왼쪽에서 질문을 입력하고 AI 분석을 실행하세요."
+                    />
                   </article>
                 </div>
               )}
@@ -1588,11 +1638,18 @@ export default function App() {
                 setSession(next);
               }}
               onRefresh={() => {
-                loadAccount();
+                loadAccount(true);
                 api.health().then(setHealth).catch(() => {});
               }}
               onOpenHolding={openHolding}
               formatMoney={formatMoney}
+            />
+          )}
+          {workspace === "calendar" && (
+            <DividendCalendarWorkspace
+              onOpenSymbol={openSymbolOnDesk}
+              recommendCount={recs.length || scanItems.length}
+              recommendedSymbols={recs.map((r) => r.symbol).filter(Boolean).slice(0, 12)}
             />
           )}
           {workspace === "sec13f" && <Sec13FWorkspace />}

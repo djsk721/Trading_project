@@ -11,7 +11,10 @@ SYSTEM_PROMPT = (
     "Treat rule analysis as an objective indicator scorecard: agree, disagree, or "
     "refine it with clear reasons. Do not ignore conflicting rules. "
     "If evidence is insufficient, say so clearly. "
-    "Respond in Korean. Be concise, structured, and avoid guaranteed-profit claims. "
+    "Respond in Korean. "
+    "Write clean GitHub-flavored Markdown: use ## headings, bullet lists, and **bold** for key terms. "
+    "Do not wrap the whole answer in a code fence. Do not use raw HTML. "
+    "Keep sections short and scannable. Avoid guaranteed-profit claims. "
     "Always include risk caveats."
 )
 
@@ -48,13 +51,14 @@ Rule-based technical checklist (must evaluate explicitly):
 Context:
 {context}
 
-Write:
-1) Assessment of the rule checklist (agree / partial / disagree) with reasons
-2) Base scenario
-3) Bull / bear cases with price zones
-4) Key invalidation levels
-5) Confidence (1-10) with rationale
-"""
+Write Korean Markdown with these ## headings:
+## 룰 체크리스트 평가
+## 기본 시나리오
+## 상승 / 하락 시나리오
+## 무효화 레벨
+## 신뢰도
+
+Use short bullets. Do not wrap the answer in a code fence."""
 
     if analysis_type in {"strategy", "투자전략"}:
         return f"""Create an actionable investment strategy for {stock_name}.
@@ -69,13 +73,14 @@ Rule-based technical checklist (must evaluate explicitly):
 Context:
 {context}
 
-Cover:
-1) Assessment of the rule checklist (agree / partial / disagree)
-2) Positioning / allocation idea
-3) Entry / add / reduce plan
-4) Stop-loss and take-profit zones
-5) Risk management checklist
-"""
+Write Korean Markdown with these ## headings:
+## 룰 체크리스트 평가
+## 포지션 아이디어
+## 진입 / 추가 / 축소
+## 손절 / 익절
+## 리스크 점검
+
+Use short bullets. Do not wrap the answer in a code fence."""
 
     # basic
     return f"""Answer the user question about {stock_name} using the rule checklist and context.
@@ -90,9 +95,10 @@ Rule-based technical checklist (must evaluate explicitly):
 Context:
 {context}
 
-Structure:
-1) Direct answer
-2) Rule checklist assessment (which signals matter most now)
-3) Supporting evidence from context
-4) Risks / uncertainties
-"""
+Write Korean Markdown with these ## headings:
+## 결론
+## 룰 체크리스트 평가
+## 근거
+## 리스크
+
+Use short bullets. Do not wrap the answer in a code fence."""

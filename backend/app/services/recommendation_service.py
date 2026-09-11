@@ -24,6 +24,28 @@ from app.services.recommend_universe import universe_as_mapping, universe_yf_map
 
 log = logging.getLogger(__name__)
 
+_PROGRESS: Dict[str, Any] = {
+    "stage": "idle",
+    "stage_label": "대기",
+    "progress": 0,
+    "message": "추천 대기 중",
+    "updated_at": None,
+}
+
+
+def _set_progress(stage: str, label: str, progress: int, message: str = "") -> None:
+    _PROGRESS.update({
+        "stage": stage,
+        "stage_label": label,
+        "progress": max(0, min(100, int(progress))),
+        "message": message or label,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    })
+
+
+def recommend_progress() -> Dict[str, Any]:
+    return dict(_PROGRESS)
+
 RECOMMEND_SYSTEM = (
     "당신은 주식 전략가입니다. 제공된 기술지표와 최근 헤드라인만 사용해 "
     "일일 관심 종목을 선정하세요. 모든 자연어 응답(사유, 시장 코멘트)은 "
@@ -682,14 +704,17 @@ def build_daily_recommendations(
     if not force:
         cached = load_daily(out_market, as_of=as_of)
         if cached:
+            _set_progress("done", "캐시", 100, "당일 추천 캐시 사용")
             cached = dict(cached)
             cached["cached"] = True
             cached["market"] = out_market
             cached["as_of"] = cached.get("as_of") or as_of
             return cached
+        _set_progress("idle", "대기", 0, "당일 추천 캐시 없음")
         return _empty_daily(out_market, as_of)
 
     # 0–1) 시장별 유니버스 + 기술지표 스캔 후 통합
+    _set_progress("universe", "종목풀", 10, "추천 종목풀 구성 중")
     candidates: List[Dict[str, Any]] = []
     sources: List[str] = []
     universe_size = 0
@@ -704,13 +729,17 @@ def build_daily_recommendations(
             _collect_candidates(mkt, days, universe, workers=workers, yf_map=yf_map)
         )
 
+    _set_progress("scoring", "스코어링", 45, "기술지표 스코어링 완료")
     candidates.sort(key=lambda x: x["score"], reverse=True)
     for i, item in enumerate(candidates, start=1):
         item["scan_rank"] = i
 
     # 2) 상위 shortlist: 뉴스 + AI 브리핑 (분야·뉴스·개요)
+    _set_progress("shortlist", "후보 압축", 65, "상위 후보 압축 중")
     shortlist = candidates[:shortlist_n]
+    _set_progress("news", "뉴스", 78, "후보 종목 뉴스 요약 중")
     shortlist = _attach_news_briefs(shortlist, per_stock=5)
+    _set_progress("ai", "AI", 88, "AI 브리핑 생성 중")
     shortlist = _attach_ai_summaries(shortlist, provider=provider)
     summary_by_symbol = {s["symbol"]: s for s in shortlist}
 
@@ -781,4 +810,5 @@ def build_daily_recommendations(
         ),
     }
     save_daily(out_market, result)
+    _set_progress("done", "완료", 100, "추천 생성 완료")
     return result

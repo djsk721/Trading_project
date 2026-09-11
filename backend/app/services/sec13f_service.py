@@ -6,6 +6,7 @@ import logging
 import re
 import shutil
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,8 @@ import httpx
 import pandas as pd
 
 log = logging.getLogger(__name__)
+_DASHBOARD_TTL = 90.0
+_dashboard_cache: tuple[float, dict[str, Any]] | None = None
 
 SEC_13F_PAGE = "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets"
 USER_AGENT = "TradingProject/2.0 contact@example.com"
@@ -393,7 +396,9 @@ def _read_cached(path: str, mtime: float) -> pd.DataFrame:
 
 
 def _clear_read_cache() -> None:
+    global _dashboard_cache
     _read_cached.cache_clear()
+    _dashboard_cache = None
 
 
 def _load(name: str) -> pd.DataFrame:
@@ -416,6 +421,10 @@ def load_transactions() -> pd.DataFrame:
 
 
 def dashboard() -> dict[str, Any]:
+    global _dashboard_cache
+    now = time.time()
+    if _dashboard_cache and now - _dashboard_cache[0] < _DASHBOARD_TTL:
+        return _dashboard_cache[1]
     meta = read_metadata()
     managers = _latest_manager_rows(load_managers())
     holdings = load_holdings()
@@ -439,7 +448,7 @@ def dashboard() -> dict[str, Any]:
         .sort_values(["manager_count", "total_value"], ascending=False)
         .head(10)
     )
-    return {
+    out = {
         "metadata": meta,
         "manager_count": int(managers["cik"].nunique()) if not managers.empty else 0,
         "issuer_count": int(holdings["cusip"].nunique()) if not holdings.empty else 0,
@@ -447,6 +456,8 @@ def dashboard() -> dict[str, Any]:
         "recent_new_holdings": new.to_dict("records"),
         "shared_buys": shared.to_dict("records"),
     }
+    _dashboard_cache = (now, out)
+    return out
 
 
 def search_managers(query: str = "", limit: int = 50) -> list[dict[str, Any]]:

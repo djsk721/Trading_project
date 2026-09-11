@@ -6,11 +6,76 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from app.services import kis_client, toss_client
+from app.core.config import get_settings
 from app.services.broker_settings import get_active_broker
 
 
 def active_broker() -> str:
     return get_active_broker()
+
+
+def trading_enabled() -> bool:
+    settings = get_settings()
+    return bool(settings.trading_enabled) and not bool(settings.test_mode)
+
+
+def _blocked_order_response(action: str, symbol: str, qty: int | float | None, price: int | float | None) -> Dict[str, Any]:
+    settings = get_settings()
+    reason = "TEST_MODE=true" if settings.test_mode else "TRADING_ENABLED=false"
+    return {
+        "success": False,
+        "message": f"실제 주문 차단됨 ({reason}). 요청은 브로커로 전송되지 않았습니다.",
+        "data": {
+            "blocked": True,
+            "reason": reason,
+            "action": action,
+            "broker": active_broker(),
+            "symbol": symbol,
+            "qty": qty,
+            "price": price,
+        },
+    }
+
+
+def capabilities() -> Dict[str, Any]:
+    active = active_broker()
+    is_toss = active == "toss"
+    connected = is_connected()
+    return {
+        "active_broker": active,
+        "connected": connected,
+        "trading_enabled": trading_enabled(),
+        "test_mode": bool(get_settings().test_mode),
+        "rate_limited": is_rate_limited(),
+        "supports": {
+            "domestic_stocks": True,
+            "overseas_stocks": is_toss,
+            "market_order": True,
+            "limit_order": True,
+            "modify_order": False,
+            "cancel_order": True,
+            "pending_orders": True,
+            "order_history": False,
+            "fills_history": False,
+            "virtual_trading": not is_toss,
+            "foreign_currency": is_toss,
+            "exchange_rate": True,
+        },
+        "disabled_reason": "" if trading_enabled() else "실제 주문은 TRADING_ENABLED=true 이고 TEST_MODE=false 일 때만 전송됩니다.",
+    }
+
+
+def diagnostics() -> Dict[str, Any]:
+    caps = capabilities()
+    return {
+        **caps,
+        "checks": [
+            {"name": "브로커 선택", "ok": caps["active_broker"] in {"kis", "toss"}, "detail": caps["active_broker"]},
+            {"name": "API 연결", "ok": bool(caps["connected"]), "detail": "connected" if caps["connected"] else "credentials/IP/account 확인 필요"},
+            {"name": "Rate limit", "ok": not bool(caps["rate_limited"]), "detail": "cooldown" if caps["rate_limited"] else "ok"},
+            {"name": "주문 안전 플래그", "ok": bool(caps["trading_enabled"]), "detail": caps["disabled_reason"] or "enabled"},
+        ],
+    }
 
 
 def _use_toss() -> bool:
@@ -83,6 +148,8 @@ def place_buy_order(
     qty: int | float,
     price: Optional[int | float] = None,
 ) -> Dict[str, Any]:
+    if not trading_enabled():
+        return _blocked_order_response("buy", symbol, qty, price)
     if _use_toss():
         return toss_client.place_buy_order(symbol, qty, price=price)
     return kis_client.place_buy_order(symbol, qty, price=price)
@@ -93,12 +160,16 @@ def place_sell_order(
     qty: Optional[int | float] = None,
     price: Optional[int | float] = None,
 ) -> Dict[str, Any]:
+    if not trading_enabled():
+        return _blocked_order_response("sell", symbol, qty, price)
     if _use_toss():
         return toss_client.place_sell_order(symbol, qty, price=price)
     return kis_client.place_sell_order(symbol, qty, price=price)
 
 
 def cancel_order(symbol: str, order_id: Optional[str] = None) -> Dict[str, Any]:
+    if not trading_enabled():
+        return _blocked_order_response("cancel", symbol, None, None)
     if _use_toss():
         return toss_client.cancel_order(symbol, order_id)
     return kis_client.cancel_order(symbol, order_id)

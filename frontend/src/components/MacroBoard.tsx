@@ -3,12 +3,14 @@ import { api, MacroSnapshot } from "../api";
 
 type Props = {
   refreshMs?: number;
+  active?: boolean;
 };
 
-export default function MacroBoard({ refreshMs = 60_000 }: Props) {
+export default function MacroBoard({ refreshMs = 180_000, active = true }: Props) {
   const [macros, setMacros] = useState<MacroSnapshot | null>(null);
 
   useEffect(() => {
+    if (!active) return;
     let alive = true;
     async function load(force = false) {
       try {
@@ -24,7 +26,7 @@ export default function MacroBoard({ refreshMs = 60_000 }: Props) {
       alive = false;
       window.clearInterval(t);
     };
-  }, [refreshMs]);
+  }, [refreshMs, active]);
 
   return (
     <section className="macro-board macro-board-main" aria-label="실시간 매크로 지표">

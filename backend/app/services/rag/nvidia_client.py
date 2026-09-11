@@ -11,11 +11,22 @@ from app.core.config import get_settings
 log = logging.getLogger(__name__)
 
 
+def _runtime_api_key() -> str:
+    try:
+        from app.services.broker_settings import get_nvidia_override
+
+        return (get_nvidia_override() or "").strip()
+    except Exception:
+        return ""
+
+
 class NvidiaClient:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.base_url = (self.settings.nvidia_base_url or "").rstrip("/")
-        self.api_key = (self.settings.nvidia_api_key or "").strip()
+        # 런타임 오버레이(로그인 화면 입력 키) > .env 순으로 해석
+        runtime_key = _runtime_api_key()
+        self.api_key = runtime_key or (self.settings.nvidia_api_key or "").strip()
         self.llm_model = self.settings.nvidia_llm_model
         self.embed_model = self.settings.nvidia_embed_model
         self.timeout = self.settings.nvidia_timeout_sec
@@ -118,3 +129,8 @@ def get_nvidia() -> NvidiaClient:
     if _client is None:
         _client = NvidiaClient()
     return _client
+
+
+def reset_nvidia_instance() -> None:
+    global _client
+    _client = None

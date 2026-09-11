@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote_plus, urlparse
 from xml.etree import ElementTree
 
@@ -14,8 +15,18 @@ import httpx
 from app.core.config import get_settings
 from app.services.market_data import resolve_stock_name
 from app.services.news_article_cache import enrich_and_sort_items, prepare_articles_async
+from app.services.symbol_utils import looks_like_kr_ticker, normalize_symbol
 
 log = logging.getLogger(__name__)
+
+# 뉴스 매칭용 정식명 캐시 (ticker -> (expires_at, identity))
+_IDENTITY_TTL = 3600.0
+_identity_cache: Dict[str, Tuple[float, dict]] = {}
+_LEGAL_SUFFIX = re.compile(
+    r",?\s+(inc\.?|incorporated|corp\.?|corporation|co\.?|ltd\.?|llc\.?|"
+    r"holdings|group|plc|sa|ag|nv|주식회사|㈜)\s*\.?$",
+    re.I,
+)
 
 # 블로그/커뮤니티성 소스 제외
 _BLOG_PATTERNS = re.compile(
@@ -73,6 +84,176 @@ def _is_blog_item(title: str, source: str, url: str) -> bool:
     if any(x in host for x in ("blog", "tistory", "medium.com", "brunch", "velog")):
         return True
     return False
+
+
+def _uniq_keep_order(values: List[str]) -> List[str]:
+    seen: set[str] = set()
+    out: List[str] = []
+    for raw in values:
+        val = re.sub(r"\s+", " ", (raw or "").strip())
+        if not val:
+            continue
+        key = val.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(val)
+    return out
+
+
+def _is_weak_alias(name: str, symbol: str, *, kr_listed: bool) -> bool:
+    """짧은 별칭은 타 종목(스냅→바이오스냅)에 부분일치하므로 매칭 키로 쓰지 않습니다."""
+    n = (name or "").strip()
+    if not n:
+        return True
+    # 티커 자체는 별도 심볼 매칭을 쓰므로, Snap==SNAP 같은 짧은 영문은 약칭으로 봅니다.
+    if kr_listed:
+        return False
+    if _LEGAL_SUFFIX.search(n):
+        return False
+    if re.fullmatch(r"[가-힣]{1,4}", n):
+        return True
+    if re.fullmatch(r"[A-Za-z]{1,5}", n):
+        return True
+    return False
+
+
+def _name_variants(name: str) -> List[str]:
+    """Snap Inc. / Snap, Inc. 처럼 구두점만 다른 정식명 변형."""
+    base = re.sub(r"\s+", " ", (name or "").strip())
+    if not base:
+        return []
+    variants = [base, base.replace(",", "")]
+    compact = re.sub(r"[,.]", "", base)
+    compact = re.sub(r"\s+", " ", compact).strip()
+    if compact:
+        variants.append(compact)
+    no_suffix = _LEGAL_SUFFIX.sub("", base).strip(" ,.")
+    # 접미사 제거한 짧은 영문(Snap)은 변형에 넣지 않음
+    if no_suffix and not _is_weak_alias(no_suffix, "", kr_listed=False):
+        variants.append(no_suffix)
+    return _uniq_keep_order(variants)
+
+
+def _isolated_pattern(term: str) -> re.Pattern[str]:
+    """한글·영문이 붙은 다른 상호(바이오스냅)는 제외하고 토큰 단위로 매칭."""
+    escaped = re.escape(term)
+    return re.compile(
+        rf"(?<![A-Za-z0-9가-힣]){escaped}(?![A-Za-z0-9가-힣])",
+        re.IGNORECASE,
+    )
+
+
+def _us_official_names(symbol: str) -> List[str]:
+    try:
+        import yfinance as yf
+
+        info = yf.Ticker(symbol).info or {}
+    except Exception as exc:
+        log.debug("news identity yfinance failed for %s: %s", symbol, exc)
+        return []
+    names: List[str] = []
+    for key in ("longName", "shortName"):
+        val = str(info.get(key) or "").strip()
+        if val:
+            names.append(val)
+    return names
+
+
+def resolve_news_identity(symbol: str, market: str = "KRX", stock_name: Optional[str] = None) -> dict:
+    """뉴스 검색·필터에 쓸 종목코드와 정식 회사명."""
+    key = normalize_symbol(symbol, market) or (symbol or "").strip().upper()
+    cache_key = f"{(market or '').upper()}:{key}"
+    now = time.time()
+    cached = _identity_cache.get(cache_key)
+    if cached and cached[0] > now:
+        ident = dict(cached[1])
+        if stock_name and stock_name not in ident["display_names"]:
+            ident["display_names"] = _uniq_keep_order([stock_name, *ident["display_names"]])
+        return ident
+
+    kr_listed = looks_like_kr_ticker(key)
+    listed_name = resolve_stock_name(key, market)
+    display = (stock_name or "").strip() or listed_name
+    official: List[str] = []
+    if kr_listed:
+        official.append(listed_name)
+        # 짧은 별칭(삼성)은 계열사 뉴스까지 끌어오므로 상장 정식명만 사용
+        extra = display
+        if (
+            extra
+            and extra.casefold() != listed_name.casefold()
+            and extra not in listed_name
+            and listed_name not in extra
+            and not _is_weak_alias(extra, key, kr_listed=False)
+        ):
+            official.append(extra)
+    else:
+        official.extend(_us_official_names(key))
+        if display and not _is_weak_alias(display, key, kr_listed=False):
+            official.append(display)
+
+    names: List[str] = []
+    for raw in official:
+        names.extend(_name_variants(raw))
+    names = [n for n in _uniq_keep_order(names) if not _is_weak_alias(n, key, kr_listed=kr_listed)]
+
+    ident = {
+        "symbol": key,
+        "market": (market or "").upper() or ("KRX" if looks_like_kr_ticker(key) else "US"),
+        "kr_listed": kr_listed,
+        "display": display or key,
+        "display_names": _uniq_keep_order([display, key]),
+        "names": names,
+    }
+    _identity_cache[cache_key] = (now + _IDENTITY_TTL, ident)
+    return ident
+
+
+def _item_text(item: dict) -> str:
+    return " ".join(
+        str(item.get(k) or "")
+        for k in ("title", "title_original", "summary", "url")
+    )
+
+
+def news_item_matches_identity(item: dict, identity: dict) -> bool:
+    """종목코드 또는 정식 회사명이 토큰으로 있을 때만 해당 종목 뉴스로 인정."""
+    blob = _item_text(item)
+    if not blob.strip():
+        return False
+    symbol = str(identity.get("symbol") or "").strip()
+    if symbol:
+        if _isolated_pattern(symbol).search(blob):
+            return True
+        # 국내 6자리는 URL/본문에 하이픈이 끼는 경우도 허용
+        if looks_like_kr_ticker(symbol) and re.search(
+            rf"(?<!\d){symbol[0:3]}-?{symbol[3:6]}(?!\d)", blob
+        ):
+            return True
+    for name in identity.get("names") or []:
+        if len(name) < 2:
+            continue
+        if _isolated_pattern(name).search(blob):
+            return True
+    return False
+
+
+def _search_queries(identity: dict) -> List[str]:
+    symbol = identity["symbol"]
+    names = identity.get("names") or []
+    if identity.get("kr_listed"):
+        queries = [f'"{symbol}"', f"{symbol} 주식"]
+        for name in names[:2]:
+            queries.append(f'"{name}" 주식')
+            queries.append(f'"{name}" {symbol}')
+        return _uniq_keep_order(queries)
+
+    queries = [f'"{symbol}" stock', f"{symbol} earnings", f'"{symbol}" 주식']
+    for name in names[:2]:
+        queries.append(f'"{name}"')
+        queries.append(f'"{name}" stock')
+    return _uniq_keep_order(queries)
 
 
 def _google_news_rss(query: str, language: str = "ko", max_items: int = 40) -> List[dict]:
@@ -169,50 +350,60 @@ def _yfinance_news(symbol: str, max_items: int = 10) -> List[dict]:
 
 def fetch_news(symbol: str, market: str = "KRX", stock_name: Optional[str] = None) -> dict:
     settings = get_settings()
-    name = stock_name or resolve_stock_name(symbol, market)
+    identity = resolve_news_identity(symbol, market, stock_name)
+    name = identity["display"]
+    ticker = identity["symbol"]
     max_items = settings.news_max_items
-
-    queries: List[str] = []
-    if market.upper() == "KRX" or symbol.isdigit():
-        queries.append(f"{name} 주식")
-        queries.append(f"{name} 증권")
-        queries.append(symbol)
-    else:
-        queries.append(f"{name} stock news")
-        queries.append(f"{symbol} stock")
+    queries = _search_queries(identity)
 
     collected: List[dict] = []
     seen = set()
+    dropped = 0
     for q in queries:
         for item in _google_news_rss(q, language=settings.news_language, max_items=max_items * 2):
             key = (item["title"], item.get("url"))
             if key in seen:
                 continue
             seen.add(key)
-            item["symbol"] = symbol
+            item["symbol"] = ticker
             item["stock_name"] = name
             item["title_original"] = item.get("title") or ""
+            if not news_item_matches_identity(item, identity):
+                dropped += 1
+                continue
             collected.append(item)
         if len(collected) >= max_items:
             break
 
     if len(collected) < 5:
-        for item in _yfinance_news(symbol, max_items=max_items):
+        for item in _yfinance_news(ticker, max_items=max_items):
             key = (item["title"], item.get("url"))
             if key in seen:
                 continue
             seen.add(key)
-            item["symbol"] = symbol
+            item["symbol"] = ticker
             item["stock_name"] = name
             item["title_original"] = item.get("title") or ""
+            if not news_item_matches_identity(item, identity):
+                dropped += 1
+                continue
             collected.append(item)
+
+    if dropped:
+        log.info(
+            "news identity filter %s (%s): kept %s, dropped %s unrelated",
+            ticker,
+            name,
+            len(collected),
+            dropped,
+        )
 
     collected = enrich_and_sort_items(collected, sort="importance")
     collected = collected[:max_items]
     return {
-        "symbol": symbol,
+        "symbol": ticker,
         "stock_name": name,
-        "market": market,
+        "market": identity["market"] or market,
         "items": collected,
         "count": len(collected),
         "sort": "importance",

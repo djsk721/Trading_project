@@ -11,8 +11,15 @@ type Props = {
 };
 
 const CAT_ALL = "all";
+const FALLBACK_CATEGORIES = [
+  { id: "kr", label: "한국" },
+  { id: "us", label: "미국" },
+  { id: "world", label: "세계·지정학" },
+  { id: "risk", label: "리스크·원자재" },
+  { id: "crypto", label: "암호화폐" },
+];
 
-export default function MarketPulsePanel({ open, onClose, provider = "nvidia" }: Props) {
+export default function MarketPulsePanel({ open, onClose, provider = "ollama" }: Props) {
   const [items, setItems] = useState<MarketNewsItem[]>([]);
   const [categories, setCategories] = useState<{ id: string; label: string }[]>([]);
   const [cat, setCat] = useState(CAT_ALL);
@@ -44,6 +51,10 @@ export default function MarketPulsePanel({ open, onClose, provider = "nvidia" }:
     });
   }, [items, cat, sortMode]);
 
+  const tabCategories = useMemo(() => {
+    const byId = new Map((categories || []).map((c) => [c.id, c]));
+    return FALLBACK_CATEGORIES.map((c) => byId.get(c.id) || c);
+  }, [categories]);
   const tabDigest = digests[cat];
   const tabBriefing = useMemo(
     () => (tabDigest?.text ? parseBriefing(tabDigest.text) : null),
@@ -163,7 +174,7 @@ export default function MarketPulsePanel({ open, onClose, provider = "nvidia" }:
           <div>
             <h2>시황 뉴스</h2>
             <p className="muted">
-              한국·미국·세계·리스크 시황
+              한국·미국·세계·리스크·암호화폐 시황
               {digestDay ? ` · ${digestDay}` : ""}
               {fetchedAt ? ` · 수집 ${fetchedAt.slice(0, 16).replace("T", " ")}` : ""}
               {digestPreparing ? " · 시황 정리 중…" : preparing ? " · 브리핑 준비 중…" : ""}
@@ -192,7 +203,7 @@ export default function MarketPulsePanel({ open, onClose, provider = "nvidia" }:
           >
             전체
           </button>
-          {categories.map((c) => (
+          {tabCategories.map((c) => (
             <button
               key={c.id}
               type="button"

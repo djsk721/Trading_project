@@ -6,7 +6,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analysis, market, news, recommend, sec13f, settings as settings_api, trading
+from app.api import analysis, calendar, market, news, recommend, sec13f, settings as settings_api, trading
 from app.core.config import get_settings
 from app.schemas.analysis import HealthResponse
 from app.services import broker, kis_client
@@ -30,6 +30,7 @@ app.include_router(trading.router, prefix="/api")
 app.include_router(analysis.router, prefix="/api")
 app.include_router(news.router, prefix="/api")
 app.include_router(recommend.router, prefix="/api")
+app.include_router(calendar.router, prefix="/api")
 app.include_router(sec13f.router, prefix="/api")
 app.include_router(settings_api.router, prefix="/api")
 

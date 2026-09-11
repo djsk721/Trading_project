@@ -21,6 +21,10 @@ except Exception:  # pragma: no cover
 _DOMESTIC_MARKETS = {"KRX", "KOSPI", "KOSDAQ", "KONEX"}
 _kis_instance: Optional[Any] = None
 _kis_lock = threading.Lock()
+_last_kis_error = ""
+
+KIS_APPKEY_LEN = 36
+KIS_SECRET_LEN = 180
 
 # 유량 보호용 TTL 캐시 (초)
 _QUOTE_TTL = 20.0
@@ -99,19 +103,55 @@ def _is_domestic_market(market: str) -> bool:
     return m.startswith("K") and m not in {"NYSE", "NASDAQ", "AMEX"}
 
 
+def _clean_credential(value: str) -> str:
+    """복사 시 붙는 따옴표·공백·개행을 제거합니다. 키 값은 로그에 남기지 않습니다."""
+    text = (value or "").replace("\ufeff", "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        text = text[1:-1].strip()
+    return "".join(text.split())
+
+
+def _kis_credential_error(app_key: str, app_secret: str) -> str:
+    key_len = len(app_key)
+    secret_len = len(app_secret)
+    if key_len != KIS_APPKEY_LEN:
+        swapped = " App Secret과 칸이 바뀌었을 수 있습니다." if key_len == KIS_SECRET_LEN else ""
+        return (
+            f"한투 App Key 길이가 {key_len}자입니다. Open API App Key는 {KIS_APPKEY_LEN}자여야 합니다."
+            f"{swapped} 로그인에서 키를 다시 붙여넣으세요."
+        )
+    if secret_len != KIS_SECRET_LEN:
+        swapped = " App Key와 칸이 바뀌었을 수 있습니다." if secret_len == KIS_APPKEY_LEN else ""
+        return (
+            f"한투 App Secret 길이가 {secret_len}자입니다. Open API App Secret은 {KIS_SECRET_LEN}자여야 합니다."
+            f"{swapped}"
+        )
+    return ""
+
+
+def last_kis_error() -> str:
+    return _last_kis_error
+
+
 def _kis_setup_hint() -> str:
+    if _last_kis_error:
+        return _last_kis_error
     settings = get_settings()
     if not HAS_PYKIS:
         return (
             "python-kis(pykis) 패키지가 설치되지 않았습니다. "
             "backend에서 `pip install -r requirements.txt` 실행 후 서버를 재시작하세요."
         )
-    if not (
-        settings.kis_app_key
-        and settings.kis_app_secret
-        and settings.kis_account
-    ) and not settings.resolved_kis_auth_path.exists():
-        return "KIS API 키가 없습니다. `.env` 또는 내 계좌에서 키를 설정하세요."
+    try:
+        from app.services.broker_settings import get_kis_override
+
+        has_user = bool(get_kis_override())
+    except Exception:
+        has_user = False
+    has_env = bool(settings.kis_app_key and settings.kis_app_secret and settings.kis_account)
+    has_file = settings.resolved_kis_auth_path.exists()
+    if not (has_user or has_env or has_file):
+        return "KIS API 키가 없습니다. 로그인 화면 또는 `.env`에서 키를 설정하세요."
     return "KIS API 연결에 실패했습니다. 앱키·계좌·실전/모의 설정을 확인하세요."
 
 
@@ -136,15 +176,24 @@ def _empty_account(error: str = "") -> Dict[str, Any]:
 
 
 def reset_kis_instance() -> None:
-    """사용자 키 변경 시 기존 연결을 버리고 다시 붙입니다."""
-    global _kis_instance
+    """사용자 키 변경 시 기존 연결·계좌 캐시를 버리고 다시 붙입니다."""
+    global _kis_instance, _last_kis_error, _account_cache, _account_cache_at
+    global _account_inflight, _account_inflight_result
     with _kis_lock:
         _kis_instance = None
+        _last_kis_error = ""
+    with _account_lock:
+        _account_cache = None
+        _account_cache_at = 0.0
+        _account_inflight_result = None
+        if _account_inflight is not None:
+            _account_inflight.set()
+        _account_inflight = None
 
 
 def get_kis(force: bool = False) -> Optional[Any]:
     """KIS 인스턴스 생성. 사용자 키 > secret.json > .env."""
-    global _kis_instance
+    global _kis_instance, _last_kis_error
     if _kis_instance is not None and not force:
         return _kis_instance
     if not HAS_PYKIS:
@@ -163,7 +212,7 @@ def get_kis(force: bool = False) -> Optional[Any]:
 
             override = get_kis_override()
             if override:
-                hts_id = (override.get("hts_id") or "user").lstrip("@").strip()
+                hts_id = (override.get("hts_id") or "user").lstrip("@").strip() or "user"
                 virtual = bool(override.get("virtual", True))
                 _kis_instance = _build_pykis(
                     hts_id=hts_id,
@@ -172,6 +221,7 @@ def get_kis(force: bool = False) -> Optional[Any]:
                     account=str(override.get("account") or ""),
                     virtual=virtual,
                 )
+                _last_kis_error = ""
                 log.info("KIS connected via user keys (virtual=%s)", virtual)
                 return _kis_instance
 
@@ -182,11 +232,12 @@ def get_kis(force: bool = False) -> Optional[Any]:
                     keep_token=True,
                     use_websocket=False,
                 )
+                _last_kis_error = ""
                 log.info("KIS connected via auth file: %s", auth_path)
                 return _kis_instance
 
             if settings.kis_app_key and settings.kis_app_secret and settings.kis_account:
-                hts_id = (settings.kis_hts_id or "user").lstrip("@").strip()
+                hts_id = (settings.kis_hts_id or "user").lstrip("@").strip() or "user"
                 _kis_instance = _build_pykis(
                     hts_id=hts_id,
                     app_key=settings.kis_app_key,
@@ -194,10 +245,17 @@ def get_kis(force: bool = False) -> Optional[Any]:
                     account=settings.kis_account,
                     virtual=bool(settings.kis_virtual),
                 )
+                _last_kis_error = ""
                 log.info("KIS connected via .env credentials (virtual=%s)", settings.kis_virtual)
                 return _kis_instance
             log.warning("KIS credentials not found (.env / secret.json)")
+        except ValueError as e:
+            _last_kis_error = str(e)
+            log.warning("KIS init failed: %s", e)
+            _kis_instance = None
+            return None
         except Exception as e:  # pragma: no cover
+            _last_kis_error = "KIS API 연결에 실패했습니다. 앱키·계좌·실전/모의 설정을 확인하세요."
             log.exception("KIS init failed: %s", e)
             _kis_instance = None
             return None
@@ -213,6 +271,19 @@ def _build_pykis(
     account: str,
     virtual: bool,
 ) -> Any:
+    app_key = _clean_credential(app_key)
+    app_secret = _clean_credential(app_secret)
+    from app.services.broker_settings import normalize_kis_login
+
+    hts_id, account = normalize_kis_login(hts_id, account)
+    if not account:
+        raise ValueError(
+            "계좌번호는 12345678-01 형식입니다. HTS ID(@로 시작)를 계좌 칸에 넣지 마세요."
+        )
+    hts_id = hts_id or "user"
+    bad = _kis_credential_error(app_key, app_secret)
+    if bad:
+        raise ValueError(bad)
     # pykis는 첫 번째 auth가 실전(virtual=False)이어야 하며,
     # 모의투자는 virtual_auth로 별도 전달해야 한다.
     if virtual:
@@ -244,6 +315,27 @@ def _build_pykis(
         virtual=False,
     )
     return PyKis(auth, keep_token=True, use_websocket=False)
+
+
+def _call_with_timeout(fn, timeout_sec: float, timeout_message: str):
+    """KIS 호출이 멈추면 요청만 포기합니다. ThreadPoolExecutor(with)는 shutdown이 워커를 기다려 더 멈춥니다."""
+    box: Dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            box["value"] = fn()
+        except Exception as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    worker = threading.Thread(target=_run, daemon=True, name="kis-timeout")
+    worker.start()
+    worker.join(timeout=timeout_sec)
+    if worker.is_alive():
+        log.warning("KIS call timed out after %.1fs: %s", timeout_sec, timeout_message)
+        raise TimeoutError(timeout_message)
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
 
 
 def is_kis_connected() -> bool:
@@ -542,12 +634,25 @@ def _fetch_account_overview() -> Dict[str, Any]:
         return _empty_account(_kis_setup_hint())
 
     settings = get_settings()
+    from app.services.broker_settings import active_kis_account, active_kis_virtual
+
+    kis_account = active_kis_account()
+    kis_virtual = active_kis_virtual()
     try:
         balance = None
         last_err: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(2):
             try:
-                balance = kis.account().balance()
+                log.info("KIS account balance request start (attempt %s)", attempt + 1)
+                balance = _call_with_timeout(
+                    lambda: kis.account().balance(),
+                    12.0,
+                    "KIS 계좌 조회가 12초 안에 끝나지 않았습니다. 한투 Open API 장애이거나 IP 허용/실전·모의 키가 맞지 않을 수 있습니다.",
+                )
+                log.info("KIS account balance request done")
+                break
+            except TimeoutError as e:
+                last_err = e
                 break
             except Exception as e:
                 last_err = e
@@ -565,8 +670,8 @@ def _fetch_account_overview() -> Dict[str, Any]:
             return {
                 **empty,
                 "connected": True,
-                "account": settings.kis_account,
-                "virtual": settings.kis_virtual,
+                "account": kis_account,
+                "virtual": kis_virtual,
             }
 
         deposits = _parse_deposits(balance)
@@ -605,12 +710,12 @@ def _fetch_account_overview() -> Dict[str, Any]:
             total_eval = domestic_stock_value + overseas_stock_krw
         total_eval_krw = total_eval + deposit_krw + deposit_usd_krw
 
-        account_no = str(getattr(balance, "account_number", settings.kis_account) or settings.kis_account)
+        account_no = str(getattr(balance, "account_number", kis_account) or kis_account)
 
         return {
             "connected": True,
             "account": account_no,
-            "virtual": settings.kis_virtual,
+            "virtual": kis_virtual,
             "total_eval_krw": round(total_eval_krw, 2),
             "purchase_amount": round(purchase_amount, 2),
             "current_amount": round(current_amount, 2),
@@ -632,11 +737,24 @@ def _fetch_account_overview() -> Dict[str, Any]:
             },
             "holdings": holdings,
         }
+    except TimeoutError as e:
+        log.warning("account overview timeout: %s", e)
+        return {
+            **empty,
+            "connected": True,
+            "account": kis_account,
+            "virtual": kis_virtual,
+            "error": str(e),
+        }
     except Exception as e:
         log.exception("account overview failed: %s", e)
         msg = str(e)
         if "모의투자용 앱키가 아닙니다" in msg:
-            friendly = "앱키가 실전용입니다. .env의 KIS_VIRTUAL=false 로 설정하세요."
+            friendly = "앱키가 실전용입니다. 로그인에서 투자 모드를 「실전투자」로 바꾸세요."
+        elif "지연" in msg or "Timeout" in type(e).__name__:
+            friendly = str(e)
+        elif "계좌번호" in msg:
+            friendly = str(e)
         elif "EGW00133" in msg or "1분당 1회" in msg:
             friendly = "접근토큰 발급 제한입니다. 약 1분 후 다시 시도하세요."
         elif "EGW00215" in msg or "초당 거래건수" in msg or "호출 횟수" in msg:
@@ -646,8 +764,8 @@ def _fetch_account_overview() -> Dict[str, Any]:
         return {
             **empty,
             "connected": True,
-            "account": settings.kis_account,
-            "virtual": settings.kis_virtual,
+            "account": kis_account,
+            "virtual": kis_virtual,
             "error": friendly,
         }
 
@@ -686,7 +804,7 @@ def get_account_overview(force: bool = False) -> Dict[str, Any]:
             leader = True
 
     if not leader and wait_event is not None:
-        wait_event.wait(timeout=60)
+        wait_event.wait(timeout=15)
         if _account_inflight_result is not None:
             return dict(_account_inflight_result)
         if _account_cache is not None:

@@ -75,19 +75,21 @@ export default function Sec13FWorkspace() {
     setLoading(true);
     setMessage("");
     try {
-      const [d, m, a] = await Promise.all([
+      const [d, m] = await Promise.all([
         api.sec13fDashboard(),
         api.sec13fManagers("", MANAGER_RESULT_LIMIT),
-        api.sec13fManagersAnalysis("", MANAGER_RESULT_LIMIT),
       ]);
       setDashboard(d);
       setManagers(m.items || []);
-      setManagerAnalysis(a);
     } catch (e: any) {
       setMessage(e.message || "13F 캐시를 불러오지 못했습니다. 업데이트를 먼저 실행하세요.");
     } finally {
       setLoading(false);
     }
+    api
+      .sec13fManagersAnalysis("", MANAGER_RESULT_LIMIT)
+      .then(setManagerAnalysis)
+      .catch(() => undefined);
   }
 
   async function runUpdate(force = false) {
@@ -154,10 +156,9 @@ export default function Sec13FWorkspace() {
 
   useEffect(() => {
     const q = managerQuery.trim();
+    if (q.length < 2) return;
     const timer = window.setTimeout(() => {
-      if (q.length >= 2 || q.length === 0) {
-        void searchManagers();
-      }
+      void searchManagers();
     }, 300);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps

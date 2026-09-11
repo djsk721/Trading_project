@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 
@@ -21,6 +22,34 @@ from app.services.rule_analysis import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _polish_analysis_markdown(text: str) -> str:
+    """코드펜스·과도한 기호를 걷어 화면용 Markdown으로 맞춥니다."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    fenced = re.match(r"^```(?:markdown|md|text)?\s*\n([\s\S]*?)\n```$", raw, re.I)
+    if fenced:
+        raw = fenced.group(1).strip()
+    raw = re.sub(r"^```(?:markdown|md|text)?\s*$", "", raw, flags=re.I | re.M)
+    raw = re.sub(r"^```\s*$", "", raw, flags=re.M)
+    lines: list[str] = []
+    for line in raw.splitlines():
+        heading = re.match(r"^\s*(?:\d+[.)]|[-*])\s+\*\*(.+?)\*\*\s*$", line)
+        if heading:
+            lines.append(f"## {heading.group(1).strip()}")
+            continue
+        numbered = re.match(r"^\s*(\d+)[.)]\s+(.+)$", line)
+        if numbered and not line.lstrip().startswith("##"):
+            title = numbered.group(2).strip()
+            if len(title) <= 40 and not title.endswith(("다", "요", "음", ".", ",")):
+                lines.append(f"## {title}")
+                continue
+        lines.append(line.rstrip())
+    out = "\n".join(lines)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
 
 
 def _business_days(start: str, n: int = 20) -> List[str]:
@@ -137,6 +166,7 @@ class QueryProcessor:
                 ],
                 provider=provider or None,
             )
+            answer = _polish_analysis_markdown(answer)
         except Exception as e:
             log.exception("LLM chat failed")
             answer = (

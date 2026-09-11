@@ -55,12 +55,12 @@ class Settings(BaseSettings):
 
     # LLM provider: auto | ollama | nvidia
     # auto = round-robin between available providers with failover
-    llm_provider: str = "nvidia"
+    llm_provider: str = "ollama"
     # Embedding provider: ollama | nvidia (keep one for vector dim consistency)
-    embed_provider: str = "nvidia"
+    embed_provider: str = "ollama"
     llm_failover: bool = True
-    # 테스트용: Ollama 로컬 엔진 비활성 (True로 다시 켤 수 있음)
-    ollama_enabled: bool = False
+    # False면 로컬 Ollama 경로를 잠급니다.
+    ollama_enabled: bool = True
 
     # Ollama / local
     ollama_base_url: str = "http://localhost:11434"
@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     default_ticker: str = "005930"
     default_exchange_rate: float = 1300.0
     cache_ttl_seconds: int = 3600
+    trading_enabled: bool = False
+    test_mode: bool = False
 
     # News
     news_max_items: int = 20
@@ -105,6 +107,9 @@ class Settings(BaseSettings):
     recommend_shortlist_size: int = 20
     recommend_universe_ttl_seconds: int = 86400
     recommend_scan_workers: int = 8
+
+    # Calendar / cache
+    dividend_cache_ttl_seconds: int = 21600
 
     @property
     def cors_origin_list(self) -> List[str]:

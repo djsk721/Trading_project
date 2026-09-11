@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -26,7 +27,7 @@ from app.services.news_service import _google_news_rss
 from app.services.rag.llm_router import get_llm_router
 
 # 다이제스트 캐시 스키마 버전 (프롬프트/지표 주입 변경 시 상향)
-_DIGEST_SCHEMA = "m1"
+_DIGEST_SCHEMA = "m4"
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ _MARKET_LIST_PATH = _CACHE_DIR / "market_news_list.json"
 _DIGEST_PATH = _CACHE_DIR / "market_tab_digests.json"
 
 _MARKET_LIST_TTL = 20 * 60  # 시황 목록 20분
+_MARKET_LIST_SCHEMA = "c1"  # 탭 구성 변경 시 상향 (crypto 포함)
 _DIGEST_TTL = 1 * 3600  # 시황 정리: 1시간 경과 시 재생성 (또는 force 새로고침)
 
 _KST = ZoneInfo("Asia/Seoul")
@@ -42,7 +44,7 @@ _KST = ZoneInfo("Asia/Seoul")
 _lock = threading.Lock()
 _digest_inflight: Dict[str, threading.Event] = {}
 
-# 수집 쿼리 6줄 → UI 탭 4개로 묶음 (kr / us / world / risk)
+# 수집 쿼리 → UI 탭 (kr / us / world / risk / crypto)
 _MARKET_QUERIES: List[tuple[str, str, str]] = [
     # 국내 증시 + 수급 + 환율
     (
@@ -80,24 +82,48 @@ _MARKET_QUERIES: List[tuple[str, str, str]] = [
         'WTI OR Brent OR DXY OR VIX OR "market volatility" OR gold when:3d',
         "en",
     ),
+    # 암호화폐 시세·수급
+    (
+        "crypto",
+        "비트코인 OR 이더리움 OR 암호화폐 OR 가상자산 OR 업비트 OR 김치프리미엄 when:3d",
+        "ko",
+    ),
+    # 암호화폐 규제·ETF·글로벌 시장
+    (
+        "crypto",
+        'Bitcoin OR Ethereum OR cryptocurrency OR "crypto market" OR "bitcoin ETF" OR SEC crypto when:3d',
+        "en",
+    ),
 ]
 
-_CATEGORY_ORDER = ("kr", "us", "world", "risk")
+_CATEGORY_ORDER = ("kr", "us", "world", "risk", "crypto")
 
 _CATEGORY_LABEL = {
     "kr": "한국",
     "us": "미국",
     "world": "세계·지정학",
     "risk": "리스크·원자재",
+    "crypto": "암호화폐",
 }
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _categories_payload() -> List[dict]:
+    return [{"id": k, "label": _CATEGORY_LABEL[k]} for k in _CATEGORY_ORDER]
+
+
+def _cache_covers_current_tabs(cached: dict) -> bool:
+    if cached.get("schema") != _MARKET_LIST_SCHEMA:
+        return False
+    ids = {str(c.get("id") or "") for c in (cached.get("categories") or [])}
+    return all(cat in ids for cat in _CATEGORY_ORDER)
 
 
 def _today_kst() -> str:
     return datetime.now(_KST).strftime("%Y-%m-%d")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _load_json(path: Path) -> dict:
@@ -127,6 +153,8 @@ def get_cached_tab_digest(category: str, day: Optional[str] = None) -> Optional[
         data = _load_json(_DIGEST_PATH)
     entry = data.get(key)
     if not entry or not entry.get("text"):
+        return None
+    if not _digest_text_is_korean(str(entry.get("text") or "")):
         return None
     if entry.get("day") and entry.get("day") != (day or _today_kst()):
         return None
@@ -181,8 +209,12 @@ def _items_for_digest(items: List[dict], category: str, day: str, limit: int = 8
 
 
 def _article_brief_line(item: dict) -> str:
-    title = (item.get("title") or "").strip()
     cached = get_cached_article(item.get("url") or "")
+    # 종합 입력만 한글 제목 우선. 목록 원문은 브리핑 보기에서 번역.
+    title = ""
+    if cached:
+        title = (cached.get("title_ko") or "").strip()
+    title = title or (item.get("title") or "").strip()
     body = ""
     if cached and cached.get("summary_ko"):
         body = str(cached["summary_ko"]).replace("\n", " ").strip()
@@ -196,6 +228,87 @@ def _article_brief_line(item: dict) -> str:
     if body:
         return f"- [{src}] {title}\n  {body}"
     return f"- [{src}] {title}"
+
+
+def _digest_text_is_korean(text: str) -> bool:
+    """본문이 한글 위주인지 확인. 영문 초안·영문 캐시는 재생성합니다."""
+    body = re.sub(r"\b(LEAD|BODY|NOTE)\s*:", " ", text or "", flags=re.I)
+    body = re.sub(r"한\s*줄\s*핵심|배경\s*[/／]?\s*내용|시사점", " ", body)
+    hangul = len(re.findall(r"[가-힣]", body))
+    latin = len(re.findall(r"[A-Za-z]", body))
+    if hangul < 15:
+        return False
+    if latin > hangul * 2:
+        return False
+    return True
+
+
+def _translate_digest_to_korean(text: str, provider: str = "") -> tuple[str, str]:
+    """영문 시황 초안을 한국어 브리핑으로 옮깁니다."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "당신은 한국어 시황 번역 에디터입니다. "
+                "입력 브리핑의 의미만 살려 자연스러운 한국어로 다시 씁니다. "
+                "문장은 한국어만 사용하고, 티커·BTC·ETF·FOMC 같은 고유명사만 영문을 남깁니다. "
+                "새로운 수치를 만들어 넣지 마세요."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "아래 시황을 한국어로 다시 쓰세요.\n"
+                "출력 형식:\n"
+                "LEAD: (한 문장, 한국어)\n"
+                "BODY: (2~4문장, 한국어)\n"
+                "NOTE: (1문장, 한국어)\n\n"
+                f"{text}"
+            ),
+        },
+    ]
+    out, used = get_llm_router().chat(
+        messages,
+        provider=provider or None,
+        temperature=0.15,
+        num_predict=550,
+    )
+    return (out or "").strip(), used
+
+
+def _digest_messages(day: str, label: str, macro_block: str, bullets: str) -> list[dict]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "당신은 한국어 트레이딩 데스크 시황 에디터입니다. "
+                "반드시 한국어로만 작성합니다. 영어 문장으로 답하지 마세요. "
+                "LIVE_MACROS와 제공된 기사만 근거로 짧게 정리합니다. "
+                "영문 기사 제목이 있어도 내용을 한글로 옮겨 적습니다. "
+                "Bitcoin, ETF, FOMC, BTC 같은 고유명사·티커만 영문을 유지하세요. "
+                "학습된 과거 지식의 지수·환율·유가·금리 수치를 절대 쓰지 마세요. "
+                "LIVE_MACROS에 없는 구체 수치(포인트, %, 달러)는 만들지 마세요. "
+                "기사에만 있는 수치는 '보도 기준'으로만 언급하세요. "
+                "번호 목록·이모지·'AI'·'요약하면' 같은 메타 표현은 쓰지 마세요. "
+                "투자 권유·확정 전망은 금지입니다."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"날짜: {day} (KST)\n"
+                f"섹션: {label}\n"
+                "언어: 한국어 (필수)\n\n"
+                f"{macro_block}\n\n"
+                "기사 메모(영어여도 출력은 한글):\n"
+                f"{bullets}\n\n"
+                "출력은 아래 세 줄 형식을 지키고 본문은 한국어:\n"
+                "LEAD: 한 문장 한국어 핵심\n"
+                "BODY: 2~4문장 한국어 배경\n"
+                "NOTE: 한 문장 한국어 시사점\n"
+            ),
+        },
+    ]
 
 
 def build_tab_digest(
@@ -266,41 +379,24 @@ def build_tab_digest(
     text = ""
     used_provider = "none"
     try:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "당신은 트레이딩 데스크 시황 에디터입니다. "
-                    "LIVE_MACROS와 제공된 기사 요약만 근거로 한국어 시황을 짧게 정리합니다. "
-                    "학습된 과거 지식의 지수·환율·유가·금리 수치를 절대 쓰지 마세요. "
-                    "LIVE_MACROS에 없는 구체 수치(포인트, %, 달러)는 만들지 마세요. "
-                    "기사에만 있는 수치는 '보도 기준'으로만 언급하세요. "
-                    "번호 목록·이모지·'AI'·'요약하면' 같은 메타 표현은 쓰지 마세요. "
-                    "투자 권유·확정 전망은 금지입니다."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"날짜: {day} (KST)\n"
-                    f"섹션: {label}\n\n"
-                    f"{macro_block}\n\n"
-                    "기사 제목·요약:\n"
-                    f"{bullets}\n\n"
-                    "출력 형식:\n"
-                    "LEAD: (한 문장. 오늘 이 섹션의 핵심. 필요 시 LIVE_MACROS 수치만 사용)\n"
-                    "BODY: (2~4문장. 기사 흐름 + 지표를 연결. 문단 가능)\n"
-                    "NOTE: (1문장. 데스크에서 볼 포인트)\n"
-                ),
-            },
-        ]
         text, used_provider = get_llm_router().chat(
-            messages,
+            _digest_messages(day, label, macro_block, bullets),
             provider=provider or None,
             temperature=0.25,
             num_predict=550,
         )
         text = (text or "").strip()
+        if text and not _digest_text_is_korean(text):
+            log.info("tab digest not Korean category=%s, translating", category)
+            try:
+                translated, trans_provider = _translate_digest_to_korean(text, provider)
+                if translated:
+                    text = translated
+                    used_provider = trans_provider or used_provider
+            except Exception as te:
+                log.warning("tab digest translate failed category=%s: %s", category, te)
+        if text and not _digest_text_is_korean(text):
+            log.warning("tab digest still English category=%s", category)
         if not text:
             text = "시황 정리를 생성하지 못했습니다."
     except Exception as e:
@@ -323,7 +419,7 @@ def build_tab_digest(
         "updated_at": _now_iso(),
         "cached": False,
     }
-    if used_provider != "none" and "실패" not in text[:20]:
+    if used_provider != "none" and "실패" not in text[:20] and _digest_text_is_korean(text):
         _put_tab_digest(entry)
     return entry
 
@@ -382,15 +478,16 @@ def prepare_tab_digests_async(
 
 
 def fetch_market_news(max_per_query: int = 8, force: bool = False) -> dict:
-    """한국/미국/세계/리스크 시황 뉴스 목록."""
+    """한국/미국/세계/리스크/암호화폐 시황 뉴스 목록."""
     if not force and _MARKET_LIST_PATH.exists():
         cached = _load_json(_MARKET_LIST_PATH)
         fetched_at = cached.get("fetched_at")
         try:
-            if fetched_at:
+            if fetched_at and _cache_covers_current_tabs(cached):
                 ts = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
                 age = (datetime.now(timezone.utc) - ts.astimezone(timezone.utc)).total_seconds()
                 if age < _MARKET_LIST_TTL and cached.get("items"):
+                    cached["categories"] = _categories_payload()
                     return cached
         except Exception:
             pass
@@ -424,19 +521,20 @@ def fetch_market_news(max_per_query: int = 8, force: bool = False) -> dict:
     by_cat: Dict[str, List[dict]] = {}
     for it in collected:
         by_cat.setdefault(it["category"], []).append(it)
+    per_cat = 8
     balanced: List[dict] = []
     for cat in _CATEGORY_ORDER:
-        balanced.extend(by_cat.get(cat, [])[:8])
+        balanced.extend(by_cat.get(cat, [])[:per_cat])
     balanced = enrich_and_sort_items(balanced, sort="importance")
-    balanced = balanced[: max(24, settings.news_max_items)]
+    cap = max(per_cat * len(_CATEGORY_ORDER), settings.news_max_items)
+    balanced = balanced[:cap]
 
     payload = {
         "fetched_at": _now_iso(),
+        "schema": _MARKET_LIST_SCHEMA,
         "items": balanced,
         "count": len(balanced),
-        "categories": [
-            {"id": k, "label": _CATEGORY_LABEL[k]} for k in _CATEGORY_ORDER
-        ],
+        "categories": _categories_payload(),
         "sort": "importance",
     }
     _save_json(_MARKET_LIST_PATH, payload)
@@ -473,6 +571,7 @@ def market_news_with_prepare(
     payload = fetch_market_news(force=force)
     items = enrich_and_sort_items(payload.get("items") or [], sort=sort)
     payload["items"] = items
+    payload["categories"] = _categories_payload()
     payload["sort"] = sort if sort in ("importance", "date") else "importance"
     payload["count"] = len(items)
 

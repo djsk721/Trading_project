@@ -85,3 +85,19 @@ class PendingOrder(BaseModel):
 class CancelOrderRequest(BaseModel):
     symbol: str
     order_id: Optional[str] = None
+
+
+class ModifyOrderRequest(BaseModel):
+    symbol: str
+    order_id: str
+    qty: Optional[float] = None
+    price: Optional[float] = None
+
+
+class AvailableOrderResponse(BaseModel):
+    symbol: str = ""
+    side: str = "buy"
+    cash_available: float = 0
+    qty_available: float = 0
+    currency: str = "KRW"
+    message: str = ""

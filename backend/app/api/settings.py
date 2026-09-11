@@ -24,9 +24,15 @@ class TossKeysIn(BaseModel):
     clear: bool = False
 
 
+class NvidiaKeysIn(BaseModel):
+    api_key: str = ""
+    clear: bool = False
+
+
 class BrokerKeysIn(BaseModel):
     kis: KisKeysIn = Field(default_factory=KisKeysIn)
     toss: TossKeysIn = Field(default_factory=TossKeysIn)
+    nvidia: NvidiaKeysIn = Field(default_factory=NvidiaKeysIn)
     active: Optional[str] = None
 
 
@@ -37,4 +43,5 @@ def broker_status():
 
 @router.post("/broker")
 def save_broker_keys(body: BrokerKeysIn):
-    return set_user_keys(body.model_dump())
+    # 미전송 필드는 기본 빈 값으로 덮어쓰지 않음 (로그인 키 유지)
+    return set_user_keys(body.model_dump(exclude_unset=True))
